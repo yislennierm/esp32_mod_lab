@@ -98,10 +98,10 @@ body,
 .nativeLiveFrame.withLens .nativeLiveCanvas {
   position: absolute;
   left: 13.68%;
-  top: 7.14%;
+  top: 11.34%;
   z-index: 1;
   width: 72.98%;
-  height: 74.07%;
+  height: auto;
 }
 
 .gbcLensMask {

@@ -275,8 +275,14 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   }
 
   const image = ctx.createImageData(renderWidth, renderHeight);
-  for (let offset = 3; offset < image.data.length; offset += 4) {
-    image.data[offset] = 255;
+  const gapColor = options.mode === 'gbc'
+    ? [79, 91, 62]
+    : [39, 45, 40];
+  for (let offset = 0; offset < image.data.length; offset += 4) {
+    image.data[offset] = gapColor[0];
+    image.data[offset + 1] = gapColor[1];
+    image.data[offset + 2] = gapColor[2];
+    image.data[offset + 3] = 255;
   }
   const persistence = options.persistence / 100;
 
