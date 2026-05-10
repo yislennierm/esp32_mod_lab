@@ -258,8 +258,13 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   const streamWidth = 161;
   const bytesPerPixel = dataMode === 'RGB666' ? 3 : 2;
 
-  const renderWidth = visibleWidth;
-  const renderHeight = visibleHeight;
+  const displayScale = options.pixelGap > 0 ? 6 : 1;
+  const gapPixels = options.pixelGap > 0
+    ? Math.max(1, Math.min(displayScale - 1, Math.round((options.pixelGap / 100) * displayScale)))
+    : 0;
+  const sourcePixelSize = displayScale - gapPixels;
+  const renderWidth = visibleWidth * displayScale;
+  const renderHeight = visibleHeight * displayScale;
   const previous = options.persistence > 0 && canvas.width === renderWidth && canvas.height === renderHeight
     ? ctx.getImageData(0, 0, renderWidth, renderHeight)
     : null;
@@ -270,6 +275,9 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   }
 
   const image = ctx.createImageData(renderWidth, renderHeight);
+  for (let offset = 3; offset < image.data.length; offset += 4) {
+    image.data[offset] = 255;
+  }
   const persistence = options.persistence / 100;
 
   for (let y = 0; y < visibleHeight; y += 1) {
@@ -281,30 +289,34 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
           ? pixelRgb664(raw, src)
           : pixelRgb666(raw, src);
       const [r, g, b] = applyVisualColor(rgb[0], rgb[1], rgb[2], options);
-      const dst = (y * renderWidth + x) * 4;
       let sr = r;
       let sg = g;
       let sb = b;
 
       if (options.mode === 'gbc') {
-        const edgeX = Math.min(x, renderWidth - 1 - x) / renderWidth;
-        const edgeY = Math.min(y, renderHeight - 1 - y) / renderHeight;
+        const edgeX = Math.min(x, visibleWidth - 1 - x) / visibleWidth;
+        const edgeY = Math.min(y, visibleHeight - 1 - y) / visibleHeight;
         const vignette = 0.88 + Math.min(edgeX, edgeY) * 1.6;
         sr *= Math.min(1, vignette);
         sg *= Math.min(1, vignette);
         sb *= Math.min(1, vignette);
       }
 
-      if (previous && persistence > 0) {
-        sr = sr * (1 - persistence) + previous.data[dst] * persistence;
-        sg = sg * (1 - persistence) + previous.data[dst + 1] * persistence;
-        sb = sb * (1 - persistence) + previous.data[dst + 2] * persistence;
+      for (let py = 0; py < sourcePixelSize; py += 1) {
+        for (let px = 0; px < sourcePixelSize; px += 1) {
+          const target = (((y * displayScale) + py) * renderWidth + (x * displayScale) + px) * 4;
+          if (previous && persistence > 0) {
+            image.data[target] = clampByte(sr * (1 - persistence) + previous.data[target] * persistence);
+            image.data[target + 1] = clampByte(sg * (1 - persistence) + previous.data[target + 1] * persistence);
+            image.data[target + 2] = clampByte(sb * (1 - persistence) + previous.data[target + 2] * persistence);
+          } else {
+            image.data[target] = clampByte(sr);
+            image.data[target + 1] = clampByte(sg);
+            image.data[target + 2] = clampByte(sb);
+          }
+          image.data[target + 3] = 255;
+        }
       }
-
-      image.data[dst] = clampByte(sr);
-      image.data[dst + 1] = clampByte(sg);
-      image.data[dst + 2] = clampByte(sb);
-      image.data[dst + 3] = 255;
     }
   }
   ctx.putImageData(image, 0, 0);
@@ -378,7 +390,6 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
         <div className="nativeLiveSurface">
           <div className={`nativeLiveFrame ${visualOptions.lens ? 'withLens' : 'withoutLens'}`}>
             <canvas ref={canvasRef} className="nativeLiveCanvas" width={640} height={576} />
-            <div className="sourcePixelGrid" style={{ opacity: visualOptions.pixelGap / 100 }} />
             {visualOptions.lens ? (
               <img
                 className="gbcLensMask"
