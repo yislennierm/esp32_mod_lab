@@ -86,6 +86,11 @@ body,
   aspect-ratio: 1140 / 1022;
 }
 
+.nativeLiveFrame.withoutLens {
+  width: auto;
+  max-width: none;
+}
+
 .nativeLiveCanvas {
   display: block;
   width: 100%;
@@ -94,6 +99,15 @@ body,
   image-rendering: pixelated;
   object-fit: contain;
   background: #050607;
+}
+
+.nativeLiveFrame.withoutLens .nativeLiveCanvas {
+  width: auto;
+  height: auto;
+}
+
+.pixiLiveHost {
+  display: contents;
 }
 
 .nativeLiveFrame.pixelGapRender {

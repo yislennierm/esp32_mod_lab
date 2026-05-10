@@ -27,6 +27,7 @@ import {
   PlayCircleOutlined,
   ProfileOutlined
 } from '@ant-design/icons';
+import { Application, Sprite, Texture } from 'pixi.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ArtifactItem, PinRow, TargetProfile, WorkbenchStatus } from './api';
 
@@ -197,6 +198,13 @@ type VisualOptions = {
   lensOpacity: number;
 };
 
+type PixiLiveRenderer = {
+  app: Application;
+  sourceCanvas: HTMLCanvasElement;
+  texture: Texture;
+  sprite: Sprite;
+};
+
 function drawMessage(canvas: HTMLCanvasElement, message: string) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -329,6 +337,44 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   ctx.putImageData(image, 0, 0);
 }
 
+async function createPixiLiveRenderer(host: HTMLDivElement): Promise<PixiLiveRenderer> {
+  const app = new Application();
+  await app.init({
+    width: 640,
+    height: 576,
+    backgroundColor: 0x050607,
+    antialias: false,
+    autoDensity: false,
+    resolution: 1,
+    preference: 'webgl'
+  });
+
+  app.canvas.className = 'nativeLiveCanvas';
+  host.replaceChildren(app.canvas);
+
+  const sourceCanvas = document.createElement('canvas');
+  sourceCanvas.width = 160;
+  sourceCanvas.height = 144;
+
+  const texture = Texture.from(sourceCanvas, true);
+  texture.source.scaleMode = 'nearest';
+  const sprite = new Sprite({ texture, roundPixels: true });
+  app.stage.addChild(sprite);
+
+  return { app, sourceCanvas, texture, sprite };
+}
+
+function presentPixiLiveFrame(renderer: PixiLiveRenderer) {
+  renderer.texture.source.resize(renderer.sourceCanvas.width, renderer.sourceCanvas.height);
+  renderer.texture.source.update();
+  renderer.texture.update();
+  renderer.sprite.scale.set(renderer.sourceCanvas.width > 320 ? 1 : 4);
+  renderer.app.renderer.resize(
+    Math.round(renderer.sourceCanvas.width * renderer.sprite.scale.x),
+    Math.round(renderer.sourceCanvas.height * renderer.sprite.scale.y)
+  );
+}
+
 function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
   status: WorkbenchStatus | null;
   onStart: () => void;
@@ -336,7 +382,9 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
   onRecover: () => void;
   onSafeIdle: () => void;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pixiHostRef = useRef<HTMLDivElement | null>(null);
+  const pixiRendererRef = useRef<PixiLiveRenderer | null>(null);
+  const [pixiReady, setPixiReady] = useState(false);
   const [frameMeta, setFrameMeta] = useState<LiveFrameMeta | null>(null);
   const [frameError, setFrameError] = useState('');
   const [visualOptions, setVisualOptions] = useState<VisualOptions>({
@@ -350,9 +398,41 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
   });
 
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!pixiHostRef.current) return;
+    let cancelled = false;
+    let renderer: PixiLiveRenderer | null = null;
+
+    createPixiLiveRenderer(pixiHostRef.current).then((created) => {
+      if (cancelled) {
+        created.app.destroy(true);
+        return;
+      }
+      renderer = created;
+      pixiRendererRef.current = created;
+      drawMessage(created.sourceCanvas, 'live capture stopped');
+      presentPixiLiveFrame(created);
+      setPixiReady(true);
+    }).catch((error) => {
+      setFrameError((error as Error).message);
+    });
+
+    return () => {
+      cancelled = true;
+      if (renderer) {
+        renderer.app.destroy(true);
+      }
+      if (pixiRendererRef.current === renderer) {
+        pixiRendererRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const renderer = pixiRendererRef.current;
+    if (!renderer) return;
     if (!status?.running) {
-      drawMessage(canvasRef.current, 'live capture stopped');
+      drawMessage(renderer.sourceCanvas, 'live capture stopped');
+      presentPixiLiveFrame(renderer);
       return;
     }
     let cancelled = false;
@@ -362,9 +442,11 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
       busy = true;
       try {
         const frame = await api.frame();
-        if (cancelled || !canvasRef.current) return;
+        if (cancelled || !pixiRendererRef.current) return;
+        const activeRenderer = pixiRendererRef.current;
         const dataMode = String(frame.metadata.pixel_format || frame.metadata.data_mode || 'RGB565');
-        drawFrame(canvasRef.current, frame.bytes, dataMode, visualOptions);
+        drawFrame(activeRenderer.sourceCanvas, frame.bytes, dataMode, visualOptions);
+        presentPixiLiveFrame(activeRenderer);
         setFrameMeta({
           dataMode,
           bytes: frame.bytes.length,
@@ -374,9 +456,10 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
         });
         setFrameError('');
       } catch (error) {
-        if (!cancelled && canvasRef.current) {
+        if (!cancelled && pixiRendererRef.current) {
           const message = (error as Error).message.trim();
-          drawMessage(canvasRef.current, message.includes('waiting') ? 'waiting for source' : 'no current live frame');
+          drawMessage(pixiRendererRef.current.sourceCanvas, message.includes('waiting') ? 'waiting for source' : 'no current live frame');
+          presentPixiLiveFrame(pixiRendererRef.current);
           setFrameError(message);
         }
       } finally {
@@ -389,14 +472,14 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [status?.running, visualOptions]);
+  }, [pixiReady, status?.running, visualOptions]);
 
   return (
     <div className="liveGrid">
       <Card className="liveCard" title="Live Monitor" extra={<Badge status={statusColor(status)} text={status?.source_state || 'unknown'} />}>
         <div className="nativeLiveSurface">
           <div className={`nativeLiveFrame ${visualOptions.lens ? 'withLens' : 'withoutLens'} ${visualOptions.mode === 'gbc' && !visualOptions.lens && visualOptions.pixelGap > 0 ? 'pixelGapRender' : ''}`}>
-            <canvas ref={canvasRef} className="nativeLiveCanvas" width={640} height={576} />
+            <div ref={pixiHostRef} className="pixiLiveHost" />
             {visualOptions.lens ? (
               <img
                 className="gbcLensMask"
