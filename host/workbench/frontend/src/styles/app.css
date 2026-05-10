@@ -1,0 +1,92 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #101418;
+}
+
+.appShell {
+  min-height: 100%;
+}
+
+.appHeader {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  height: 52px;
+  padding: 0 18px;
+  border-bottom: 1px solid #26323d;
+}
+
+.appSider {
+  min-height: calc(100vh - 52px);
+  border-right: 1px solid #26323d;
+}
+
+.appContent {
+  min-width: 0;
+  padding: 16px;
+}
+
+.pageStack,
+.fullWidth {
+  width: 100%;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.jsonBlock,
+.logBlock {
+  max-height: 52vh;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
+
+.liveGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 16px;
+}
+
+.liveCard .ant-card-body {
+  padding: 0;
+}
+
+.nativeLiveSurface {
+  display: grid;
+  place-items: center;
+  min-height: calc(100vh - 150px);
+  padding: 12px;
+  background: #050607;
+}
+
+.nativeLiveCanvas {
+  display: block;
+  width: min(100%, calc((100vh - 190px) * 1.1111));
+  max-width: 960px;
+  min-width: 320px;
+  aspect-ratio: 160 / 144;
+  image-rendering: pixelated;
+  background: #050607;
+}
+
+@media (max-width: 1050px) {
+  .statsGrid,
+  .liveGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .appSider {
+    display: none;
+  }
+}

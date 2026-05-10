@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/esp32p4-signal-lab/target_profile.schema.json",
+  "title": "ESP32-P4 Signal Lab Target Profile",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "profile_id",
+    "display_name",
+    "status",
+    "target_type",
+    "safety",
+    "connector",
+    "signals"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "target_type": {
+      "type": "string"
+    },
+    "source_documents": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "safety": {
+      "type": "object",
+      "required": [
+        "default_gpio_mode",
+        "esp32p4_gpio_5v_tolerant",
+        "dangerous_rails",
+        "do_not_connect_to_gpio"
+      ],
+      "properties": {
+        "default_gpio_mode": {
+          "type": "string"
+        },
+        "esp32p4_gpio_5v_tolerant": {
+          "type": "boolean"
+        },
+        "dangerous_rails": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "do_not_connect_to_gpio": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "known_concerns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "connector": {
+      "type": "object",
+      "properties": {
+        "pin_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pin_numbering_basis": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "signals": {
+      "type": "object",
+      "required": [
+        "timing_or_control",
+        "pixel_bus"
+      ],
+      "properties": {
+        "timing_or_control": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/signal"
+          }
+        },
+        "pixel_bus": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "analog_or_power": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/signal"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "signal": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "display_bus_pin": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "display_bus_pins": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "candidate_roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "current_esp32p4_gpio": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

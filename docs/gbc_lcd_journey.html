@@ -1,0 +1,780 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game Boy Color LCD Bus Journey</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f4;
+      --ink: #17201c;
+      --muted: #5d6761;
+      --panel: #ffffff;
+      --line: #d8ddd6;
+      --accent: #1f7a58;
+      --accent-dark: #14563e;
+      --warn: #8a4f12;
+      --code: #eef2ed;
+      --shadow: 0 18px 45px rgba(19, 35, 28, 0.12);
+      --radius: 8px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--accent-dark);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    code {
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 0.08rem 0.28rem;
+      font-size: 0.92em;
+    }
+
+    header {
+      background: #10231c;
+      color: #f7fbf8;
+      padding: 56px 24px 28px;
+    }
+
+    .hero {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1.12fr) minmax(300px, 0.88fr);
+      gap: 32px;
+      align-items: end;
+    }
+
+    .hero h1 {
+      margin: 0 0 16px;
+      font-size: clamp(2.2rem, 5vw, 4.6rem);
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 760px;
+      color: #c9d6ce;
+      font-size: 1.08rem;
+    }
+
+    .hero-meta {
+      display: grid;
+      gap: 10px;
+      margin-top: 22px;
+      color: #dbe7df;
+      font-size: 0.95rem;
+    }
+
+    .hero-card {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+
+    .hero-card img {
+      width: 100%;
+      image-rendering: pixelated;
+      border-radius: 6px;
+      background: #0b120f;
+      display: block;
+    }
+
+    .hero-card figcaption {
+      color: #c6d3cb;
+      font-size: 0.86rem;
+      margin-top: 10px;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      background: rgba(246, 247, 244, 0.94);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .nav-inner {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 10px 24px;
+      display: flex;
+      gap: 14px;
+      overflow-x: auto;
+      white-space: nowrap;
+      font-size: 0.94rem;
+    }
+
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 32px 24px 72px;
+    }
+
+    section {
+      margin: 42px 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: clamp(1.55rem, 3vw, 2.25rem);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 28px 0 10px;
+      font-size: 1.22rem;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    .lede {
+      font-size: 1.08rem;
+      color: #334139;
+      max-width: 920px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin: 18px 0;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .panel h3:first-child {
+      margin-top: 0;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eef6f1;
+      padding: 14px 16px;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      margin: 18px 0;
+    }
+
+    .warning {
+      border-left-color: var(--warn);
+      background: #fff4e5;
+    }
+
+    figure {
+      margin: 22px 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    figure img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 5px;
+      background: #111;
+    }
+
+    .pixelated {
+      image-rendering: pixelated;
+    }
+
+    figcaption {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-top: 10px;
+    }
+
+    .artifact {
+      color: #6c746f;
+      display: block;
+      margin-top: 4px;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.78rem;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .event {
+      display: grid;
+      grid-template-columns: 160px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+
+    .event .time {
+      color: var(--accent-dark);
+      font-weight: 700;
+    }
+
+    .event h3 {
+      margin: 0 0 6px;
+    }
+
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .gallery figure {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+
+    .gallery img {
+      aspect-ratio: 4 / 3;
+      object-fit: contain;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: table;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    th {
+      background: #edf3ee;
+      color: #213329;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    ul {
+      padding-left: 1.2rem;
+    }
+
+    li {
+      margin: 0.35rem 0;
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      padding: 24px;
+      max-width: 1120px;
+      margin: 0 auto;
+      font-size: 0.92rem;
+    }
+
+    @media (max-width: 860px) {
+      .hero,
+      .grid,
+      .gallery,
+      .event {
+        grid-template-columns: 1fr;
+      }
+
+      header {
+        padding-top: 34px;
+      }
+
+      .event {
+        gap: 6px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="hero">
+      <div>
+        <h1>Game Boy Color LCD Bus Journey</h1>
+        <p>
+          A visual record of the ESP32-P4 reverse engineering path from safe GPIO probing to a stable live browser view of the Game Boy Color LCD bus.
+        </p>
+        <div class="hero-meta">
+          <div>Target module: Game Boy Color LCD bus</div>
+          <div>Platform: ESP32-P4 used first as an investigation instrument</div>
+          <div>Status: live RGB565-style capture works; protocol details still under study</div>
+        </div>
+      </div>
+      <figure class="hero-card">
+        <img class="pixelated" src="../captures/decoded/lcdcam_raw/porch_test_192x145_x1/20260508T212557Z-lcdcam_raw_high_192x145_gbc_rgb332_fast_v1_frame0_x1_y0.png" alt="Near-correct GBC boot screen capture">
+        <figcaption>Later decode showing the recognizable no-cartridge boot screen structure.</figcaption>
+      </figure>
+    </div>
+  </header>
+
+  <nav aria-label="Report sections">
+    <div class="nav-inner">
+      <a href="#mission">Mission</a>
+      <a href="#timeline">Timeline</a>
+      <a href="#safety">Safety</a>
+      <a href="#timing">Timing</a>
+      <a href="#first-images">First Images</a>
+      <a href="#lcdcam">LCD_CAM</a>
+      <a href="#color">Color</a>
+      <a href="#workbench">Workbench</a>
+      <a href="#power">Power Lesson</a>
+      <a href="#current-state">Current State</a>
+      <a href="#backup">Backup</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="mission">
+      <h2>Mission</h2>
+      <p class="lede">
+        The project started as a Game Boy Color LCD bus reverse engineering effort, but it quickly became clear that the reusable result should be larger: a console picture-signal lab where the ESP32-P4 can measure pins, capture timing, test hypotheses, stream frames, and leave behind reproducible evidence.
+      </p>
+      <div class="grid">
+        <div class="panel">
+          <h3>What was being investigated</h3>
+          <p>
+            The GBC LCD flex exposes digital-looking timing and color lines plus dangerous analog LCD drive rails. The useful question was not simply "can we see a picture?" It was whether the bus could be characterized safely enough to build future tools such as screen mods, retimers, scalers, streamers, and protocol analyzers.
+          </p>
+        </div>
+        <div class="panel">
+          <h3>Why the evidence matters</h3>
+          <p>
+            Many images were wrong before they became useful. Tiled mosaics, red-only stripes, skewed frames, and odd color modes each carried information about sampling rate, byte packing, line length, sync interpretation, and electrical behavior.
+          </p>
+        </div>
+      </div>
+      <div class="callout">
+        <strong>Current conclusion:</strong> the GBC target is now a working reference module for a broader reverse engineering instrument. The code should keep the GBC workflow working while generic tools are extracted around profiles, captures, timing reports, and browser controls.
+      </div>
+    </section>
+
+    <section id="timeline">
+      <h2>Timeline Of The Investigation</h2>
+      <div class="timeline">
+        <article class="event">
+          <div class="time">Phase 1</div>
+          <div>
+            <h3>Electrical caution first</h3>
+            <p>Analog LCD rails were identified and excluded from GPIO. Firmware stayed input-only while basic serial commands, pin reads, and safe command handling were brought up.</p>
+          </div>
+        </article>
+        <article class="event">
+          <div class="time">Phase 2</div>
+          <div>
+            <h3>Timing discovery</h3>
+            <p>Edge counting and timestamp captures identified frame-like and line-like candidates. The project learned that interrupt counts were useful for slow signals but not enough for the MHz-class dot clock.</p>
+          </div>
+        </article>
+        <article class="event">
+          <div class="time">Phase 3</div>
+          <div>
+            <h3>Red data first</h3>
+            <p>Red-only capture proved the data bus carried image-related structure. The output was not a frame yet, but it was no longer blind probing.</p>
+          </div>
+        </article>
+        <article class="event">
+          <div class="time">Phase 4</div>
+          <div>
+            <h3>Red/green line bursts</h3>
+            <p>Line-burst captures produced repeated mini-screens. This looked wrong at first, but it confirmed that the bus was being sampled in a consistent, image-correlated way.</p>
+          </div>
+        </article>
+        <article class="event">
+          <div class="time">Phase 5</div>
+          <div>
+            <h3>LCD_CAM raw capture</h3>
+            <p>Peripheral-backed capture produced clearer mosaics and near-readable frames. Width sweeps and host-side sliders became the fastest way to test framing hypotheses.</p>
+          </div>
+        </article>
+        <article class="event">
+          <div class="time">Phase 6</div>
+          <div>
+            <h3>Live browser workbench</h3>
+            <p>The browser view became a practical monitor and investigation surface with live frames, controls, pin/timing tools, and recovery actions.</p>
+          </div>
+        </article>
+        <article class="event">
+          <div class="time">Hardware lesson</div>
+          <div>
+            <h3>GPIO32 was removed from the active wiring</h3>
+            <p>Power-cycle failures led to discovering backfeed-like behavior. Moving <code>CLS</code> from GPIO32 to GPIO3 restored reliable console off/on behavior while capturing.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="safety">
+      <h2>Safety And First Contact</h2>
+      <p>
+        The GBC LCD connector includes analog drive voltages that do not belong on ESP32-P4 GPIO. Those lines were documented as dangerous and intentionally left disconnected from the capture system.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Line group</th>
+            <th>Treatment</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>V0-V9</code>, <code>VCOM</code>, <code>VEE</code>, <code>VSHA</code>, <code>VSHD</code></td>
+            <td>Do not connect to GPIO</td>
+            <td>LCD analog/bias rails can exceed safe digital GPIO behavior.</td>
+          </tr>
+          <tr>
+            <td><code>DCLK</code>, <code>LP</code>, <code>SPL</code>, <code>CLS</code>, <code>SPS</code>, <code>PS</code></td>
+            <td>Input-only timing/control candidates</td>
+            <td>Useful for timing discovery when handled carefully.</td>
+          </tr>
+          <tr>
+            <td><code>R0-R5</code>, <code>G0-G5</code>, <code>B0-B5</code></td>
+            <td>Input-only pixel data candidates</td>
+            <td>Parallel color data hypothesis.</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="warning callout">
+        <strong>Lesson preserved:</strong> even input-only firmware does not guarantee perfect isolation. Board-level pulls, boot strapping, leakage paths, or ESD structures can still bias an unpowered target.
+      </div>
+    </section>
+
+    <section id="timing">
+      <h2>Timing Discovery</h2>
+      <p>
+        Timing work started with commands that could read GPIO levels and count edges. The first useful model treated <code>DCLK</code> as the pixel-clock candidate, <code>SPS</code> as frame-like, and <code>LP</code>/<code>CLS</code>/<code>PS</code> as line-rate or control candidates. <code>SPL</code> was useful, but not safely reducible to a standard horizontal sync label.
+      </p>
+      <div class="grid">
+        <div class="panel">
+          <h3>What worked</h3>
+          <ul>
+            <li>Stable frame-like cadence from <code>SPS</code>.</li>
+            <li>Line-like cadence from several non-data signals.</li>
+            <li>Short timing captures that could be repeated and compared.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>What did not prove enough</h3>
+          <ul>
+            <li>GPIO interrupt counting was not a valid full pixel-clock capture method.</li>
+            <li>Assuming VGA-style <code>HSYNC</code>/<code>VSYNC</code>/<code>DE</code> semantics caused misleading attempts.</li>
+            <li>One boot screen is not enough to prove color packing.</li>
+          </ul>
+        </div>
+      </div>
+      <p>
+        Representative timing evidence is preserved in
+        <a href="../captures/decoded/timing_relationships/20260507T214244Z-timing_relationships_100ms.md">the timing relationship report</a>,
+        <a href="../captures/experiments/timing_sessions/20260507T215223Z-steady_state_test/session_report.md">the steady-state timing session</a>, and
+        <a href="../captures/experiments/timing_sessions/20260507T215311Z-boot_power_on/session_report.md">the boot power-on timing session</a>.
+      </p>
+    </section>
+
+    <section id="first-images">
+      <h2>First Image Evidence</h2>
+      <p>
+        The first visual artifacts were not intended to be beautiful. Their value was in showing whether sampled bits changed in a way that correlated with display activity.
+      </p>
+      <div class="gallery">
+        <figure>
+          <img class="pixelated" src="../captures/decoded/red_dclk/20260507T222037Z-red_dclk_512samples.png" alt="Red-only DCLK diagnostic">
+          <figcaption>
+            Red-only DCLK diagnostic. This was an early proof that pixel data had structure.
+            <span class="artifact">captures/decoded/red_dclk/20260507T222037Z-red_dclk_512samples.png</span>
+          </figcaption>
+        </figure>
+        <figure>
+          <img class="pixelated" src="../captures/decoded/rg_line_bursts/20260508T162521Z-rg_line_bursts_160x144.png" alt="Early red green line burst">
+          <figcaption>
+            Early red/green line burst. Still wrong, but stable enough to study.
+            <span class="artifact">captures/decoded/rg_line_bursts/20260508T162521Z-rg_line_bursts_160x144.png</span>
+          </figcaption>
+        </figure>
+        <figure>
+          <img class="pixelated" src="../captures/decoded/rg_line_bursts/20260508T174921Z-rg_line_bursts_160x144.png" alt="Later red green line burst">
+          <figcaption>
+            Later line-burst result. The pattern persisted, proving the issue was systematic.
+            <span class="artifact">captures/decoded/rg_line_bursts/20260508T174921Z-rg_line_bursts_160x144.png</span>
+          </figcaption>
+        </figure>
+      </div>
+
+      <h3>The Tiling Breakthrough</h3>
+      <p>
+        The key mental shift was accepting that the broken images were evidence. Repeated low-resolution screens inside one output suggested the capture was undersampling, using the wrong stride, or grouping stream data incorrectly.
+      </p>
+      <figure>
+        <img class="pixelated" src="../captures/decoded/rg_line_bursts/20260508T162521Z-rg_line_bursts_tile_5x5_sheet_large.png" alt="Contact sheet of repeated low-resolution GBC screens">
+        <figcaption>
+          Contact sheet made from an early red/green capture. It showed many repeated boot-like mini-frames.
+          <span class="artifact">captures/decoded/rg_line_bursts/20260508T162521Z-rg_line_bursts_tile_5x5_sheet_large.png</span>
+        </figcaption>
+      </figure>
+      <figure>
+        <img class="pixelated" src="../captures/decoded/rg_line_bursts/20260508T162521Z-rg_line_bursts_160x144_tile_r3_c0_scaled.png" alt="Best early low resolution extracted tile">
+        <figcaption>
+          A low-resolution extracted tile that made the boot-screen shape visible enough to continue.
+          <span class="artifact">captures/decoded/rg_line_bursts/20260508T162521Z-rg_line_bursts_160x144_tile_r3_c0_scaled.png</span>
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="lcdcam">
+      <h2>LCD_CAM Raw Capture</h2>
+      <p>
+        The move from polling and line bursts into LCD_CAM/raw capture was the point where the project started behaving like a real instrument. The ESP32-P4 could collect more coherent data, while the host could try many interpretations without reflashing firmware.
+      </p>
+      <figure>
+        <img class="pixelated" src="../captures/decoded/lcdcam_raw/width_sweeps/20260508T193122Z-lcdcam_raw_high_320x204_stream_w320_h204.png" alt="LCD_CAM raw 320 by 204 stream mosaic">
+        <figcaption>
+          A clearer raw stream view. It contained readable repeated screens, which meant the source data was present but framed incorrectly.
+          <span class="artifact">captures/decoded/lcdcam_raw/width_sweeps/20260508T193122Z-lcdcam_raw_high_320x204_stream_w320_h204.png</span>
+        </figcaption>
+      </figure>
+      <div class="gallery">
+        <figure>
+          <img class="pixelated" src="../captures/decoded/lcdcam_raw/deskew_193122_w320/20260508T193122Z-lcdcam_raw_high_320x204_w320_h204_skewp0p00.png" alt="Deskewed LCD_CAM mosaic">
+          <figcaption>
+            Deskew test with straight but repeated screens.
+            <span class="artifact">captures/decoded/lcdcam_raw/deskew_193122_w320/20260508T193122Z-lcdcam_raw_high_320x204_w320_h204_skewp0p00.png</span>
+          </figcaption>
+        </figure>
+        <figure>
+          <img class="pixelated" src="../captures/decoded/lcdcam_raw/frame_extract_193122_sw160/20260508T193122Z-lcdcam_raw_high_320x204_sw160_x0_y240_160x144.png" alt="Frame extraction near success">
+          <figcaption>
+            Near-success frame extraction. Deformed, but clearly related to the boot image.
+            <span class="artifact">captures/decoded/lcdcam_raw/frame_extract_193122_sw160/20260508T193122Z-lcdcam_raw_high_320x204_sw160_x0_y240_160x144.png</span>
+          </figcaption>
+        </figure>
+        <figure>
+          <img class="pixelated" src="../captures/decoded/lcdcam_raw/interactive_states_193122/grid_x86_y49_line1_finem0p10.png" alt="Interactive slider state near correct">
+          <figcaption>
+            Interactive hypothesis state reported by the user as almost correct.
+            <span class="artifact">captures/decoded/lcdcam_raw/interactive_states_193122/grid_x86_y49_line1_finem0p10.png</span>
+          </figcaption>
+        </figure>
+      </div>
+      <div class="callout">
+        <strong>Core lesson:</strong> firmware should capture generic evidence. Host tools should explore interpretation: width, height, crop, byte stride, line skew, bit order, inversion, and color packing.
+      </div>
+    </section>
+
+    <section id="color">
+      <h2>Color And Packing Experiments</h2>
+      <p>
+        The target probably exposes RGB-style parallel data, but "RGB666" as a connector hypothesis is not the same as a working capture mode. Increasing bit depth changed throughput, packing, and stream interpretation. Some RGB666 attempts produced the old tiling symptom again, while packed modes such as RGB332 and RGB565-style decoding became useful for live viewing.
+      </p>
+      <div class="gallery">
+        <figure>
+          <img class="pixelated" src="../captures/decoded/rgb666_line_bursts/20260509T115056Z-rgb666_line_bursts_160x144.png" alt="RGB666 line burst with tiling artifacts">
+          <figcaption>
+            RGB666 line-burst attempt. More bits did not automatically mean a better frame.
+            <span class="artifact">captures/decoded/rgb666_line_bursts/20260509T115056Z-rgb666_line_bursts_160x144.png</span>
+          </figcaption>
+        </figure>
+        <figure>
+          <img class="pixelated" src="../captures/decoded/lcdcam_raw/porch_test_192x145_x1/20260508T212557Z-lcdcam_raw_high_192x145_gbc_rgb332_fast_v1_frame0_x1_y0.png" alt="Practical RGB332 style capture">
+          <figcaption>
+            Practical packed-color decode. It became a stable baseline for the browser monitor.
+            <span class="artifact">captures/decoded/lcdcam_raw/porch_test_192x145_x1/20260508T212557Z-lcdcam_raw_high_192x145_gbc_rgb332_fast_v1_frame0_x1_y0.png</span>
+          </figcaption>
+        </figure>
+        <figure>
+          <img class="pixelated" src="../captures/experiments/20260509T161053Z-boot_capture_rgb565/frames/frame_0000.png" alt="RGB565 boot capture frame">
+          <figcaption>
+            Boot-capture frame from the RGB565 work.
+            <span class="artifact">captures/experiments/20260509T161053Z-boot_capture_rgb565/frames/frame_0000.png</span>
+          </figcaption>
+        </figure>
+      </div>
+      <p>
+        The current boot screen is visually plausible: black text over a yellowish background. That matches the no-cartridge state well enough to use as a working baseline, but varied cartridge content is still needed before calling the color path final.
+      </p>
+    </section>
+
+    <section id="workbench">
+      <h2>Browser Workbench</h2>
+      <p>
+        The browser is no longer just a picture viewer. It is the user-facing investigation surface for the ESP32-P4 tool. The important design decision is that live view must remain simple and reliable, while investigation tabs expose pin reads, timelines, timing capture, signal scans, exports, and target-profile metadata.
+      </p>
+      <div class="grid">
+        <div class="panel">
+          <h3>What it should preserve</h3>
+          <ul>
+            <li>Live monitor behavior that recovers when the console is switched off and on.</li>
+            <li>Profile-aware pin naming and safety status.</li>
+            <li>Capture settings that can be saved as named presets.</li>
+            <li>Artifacts that can be linked from reports.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Why it matters</h3>
+          <p>
+            A future AI-assisted workflow will need the same surfaces a human uses: live frames, pin states, signal timelines, capture manifests, decode settings, and reproducible output files.
+          </p>
+        </div>
+      </div>
+      <p>
+        Related docs: <a href="investigation_workbench.md">investigation_workbench.md</a> and <a href="universal_signal_lab.md">universal_signal_lab.md</a>.
+      </p>
+    </section>
+
+    <section id="power">
+      <h2>Power-Cycle Lesson</h2>
+      <p>
+        The biggest non-image lesson came from a failure mode: the GBC sometimes would not switch back on while connected. Later measurement showed that with the GBC unpowered and the ESP32-P4 powered, several bus lines sat around intermediate voltages. That strongly suggested the ESP32-P4 side could bias the target.
+      </p>
+      <div class="grid">
+        <div class="panel">
+          <h3>Software mitigations tried</h3>
+          <ul>
+            <li><code>SAFE_IDLE</code></li>
+            <li><code>ELECTRICAL_ISOLATE</code></li>
+            <li>Startup isolation</li>
+            <li>Browser Stop isolation</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Decisive practical change</h3>
+          <p>
+            <code>CLS</code> was moved from GPIO32 to GPIO3. After that, the console could be switched off and on consistently while the live capture system was running.
+          </p>
+        </div>
+      </div>
+      <p>
+        Power monitor artifacts are preserved as
+        <a href="../captures/experiments/20260509T163645Z-power_cycle_monitor/raw.json">raw.json</a> and
+        <a href="../captures/experiments/20260509T163645Z-power_cycle_monitor/summary.json">summary.json</a>.
+      </p>
+      <div class="warning callout">
+        <strong>Do not lose this:</strong> GPIO32 is historical for this target. The current working baseline uses GPIO3 for <code>CLS</code>.
+      </div>
+    </section>
+
+    <section id="current-state">
+      <h2>Current Working State</h2>
+      <p>
+        This table captures the current known-good wiring baseline after the power-cycle fix. It should be treated as the GBC target profile, not as a universal ESP32-P4 rule.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>GBC signal</th>
+            <th>ESP32-P4 GPIO</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>DCLK</code></td><td>22</td><td>Pixel-clock candidate used by capture path.</td></tr>
+          <tr><td><code>LP</code></td><td>21</td><td>Line/control candidate.</td></tr>
+          <tr><td><code>PS</code></td><td>20</td><td>Power/blanking/control candidate.</td></tr>
+          <tr><td><code>SPL</code></td><td>19</td><td>Line/start/data-enable candidate.</td></tr>
+          <tr><td><code>CLS</code></td><td>3</td><td>Current stable wiring. Replaced GPIO32.</td></tr>
+          <tr><td><code>SPS</code></td><td>33</td><td>Frame-marker candidate.</td></tr>
+          <tr><td><code>R5..R0</code></td><td>13, 14, 15, 16, 17, 18</td><td>Red pixel data bits.</td></tr>
+          <tr><td><code>G5..G0</code></td><td>7, 8, 9, 10, 11, 12</td><td>Green pixel data bits.</td></tr>
+          <tr><td><code>B5..B0</code></td><td>50, 48, 47, 46, 45, 36</td><td>Blue pixel data bits.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Open Technical Questions</h3>
+      <ul>
+        <li>What exact role does <code>CLS</code> play in the LCD driver timing?</li>
+        <li>Is the extra line/byte behavior porch-like blanking, dummy transfer, or capture framing?</li>
+        <li>What is the final true source color packing across varied game content?</li>
+        <li>Which sample edge remains stable across all connected colors?</li>
+        <li>Does the missing original LCD panel termination or strap behavior affect disconnected flex lines?</li>
+        <li>What hardware buffer or protection should be added before this becomes a repeatable lab fixture?</li>
+      </ul>
+    </section>
+
+    <section id="backup">
+      <h2>Backup And Project Preservation</h2>
+      <p>
+        This file is web-ready as a local artifact. It uses relative links to images under <code>captures/</code>, so the simplest useful backup is to preserve this HTML file plus the referenced capture images.
+      </p>
+      <div class="grid">
+        <div class="panel">
+          <h3>Minimum story backup</h3>
+          <ul>
+            <li><code>docs/gbc_lcd_journey.html</code></li>
+            <li><code>docs/gbc_lcd_journey.md</code></li>
+            <li><code>docs/project_maintenance.md</code></li>
+            <li><code>docs/universal_signal_lab.md</code></li>
+            <li><code>profiles/gbc_lcd.json</code></li>
+            <li>All image files referenced by this page.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Recommended engineering backup</h3>
+          <ul>
+            <li><code>docs/</code></li>
+            <li><code>profiles/</code></li>
+            <li><code>firmware/main/</code></li>
+            <li><code>host/</code></li>
+            <li><code>captures/experiments/</code></li>
+            <li><code>captures/decoded/</code> if storage allows.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout">
+        <strong>Maintenance rule:</strong> cleanup should happen by classifying artifacts, not by deleting history. The broken images are part of the evidence trail.
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Generated as a local project report for the ESP32-P4 console signal lab. Paths are relative to this file in <code>docs/</code>.
+  </footer>
+</body>
+</html>

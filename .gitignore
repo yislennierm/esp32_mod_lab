@@ -1,0 +1,39 @@
+# ESP-IDF build outputs
+build*/
+firmware/build/
+firmware/build_*/
+firmware/sdkconfig.old
+experiments/*/build*/
+experiments/*/managed_components/
+
+# Local Python caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.env
+
+# Frontend dependencies/build outputs
+node_modules/
+host/workbench/frontend/dist/
+host/workbench/frontend/*.tsbuildinfo
+host/workbench/frontend/vite.config.js
+host/workbench/frontend/vite.config.d.ts
+
+# Local OS metadata
+.DS_Store
+**/.DS_Store
+
+# Captured hardware artifacts are intentionally kept out of source control by default.
+captures/raw/*
+captures/decoded/*
+captures/screenshots/*
+captures/oscilloscope/*
+captures/experiments/*
+!.gitkeep
+!captures/raw/.gitkeep
+!captures/decoded/.gitkeep
+!captures/screenshots/.gitkeep
+!captures/oscilloscope/.gitkeep
+!captures/experiments/.gitkeep

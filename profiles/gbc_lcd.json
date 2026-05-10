@@ -1,0 +1,492 @@
+{
+  "schema_version": "0.1",
+  "profile_id": "gbc_lcd",
+  "display_name": "Game Boy Color LCD Bus",
+  "status": "active_first_target",
+  "target_type": "parallel_lcd_bus",
+  "source_documents": [
+    "docs/gbc_lcd_pinout.md",
+    "docs/timing_notes.md",
+    "docs/protocol_discoveries.md",
+    "docs/framebuffer_format.md",
+    "docs/hardware_notes.md",
+    "docs/risks_and_unknowns.md"
+  ],
+  "safety": {
+    "default_gpio_mode": "input_only",
+    "esp32p4_gpio_5v_tolerant": false,
+    "dangerous_rails": [
+      "V0",
+      "V1",
+      "V2",
+      "V3",
+      "V4",
+      "V5",
+      "V6",
+      "V7",
+      "V8",
+      "V9",
+      "VCOM",
+      "VEE",
+      "VSHA",
+      "VSHD"
+    ],
+    "do_not_connect_to_gpio": [
+      "V0",
+      "V1",
+      "V2",
+      "V3",
+      "V4",
+      "V5",
+      "V6",
+      "V7",
+      "V8",
+      "V9",
+      "VCOM",
+      "VEE",
+      "VSHA",
+      "VSHD",
+      "VCC",
+      "VDD",
+      "VSS",
+      "DGND"
+    ],
+    "known_concerns": [
+      "Original LCD flex and panel-side load or termination are not yet fully characterized.",
+      "TEST and MOD strap behavior from the original assembly is not yet verified.",
+      "Power cycling while capture is active can disturb the target; use Stop, Safe Idle, or Recover before switching the console when possible.",
+      "Disconnected original LCD lines may float differently than they did with the factory panel attached."
+    ]
+  },
+  "connector": {
+    "pin_count": 49,
+    "pin_numbering_basis": "display_bus_table_from_current_wiring_notes"
+  },
+  "signals": {
+    "timing_or_control": [
+      {
+        "name": "DCLK",
+        "display_bus_pin": 36,
+        "candidate_roles": [
+          "sample_clock",
+          "pixel_clock"
+        ],
+        "current_esp32p4_gpio": 22
+      },
+      {
+        "name": "LP",
+        "display_bus_pin": 35,
+        "candidate_roles": [
+          "line_marker_candidate",
+          "line_latch_candidate"
+        ],
+        "current_esp32p4_gpio": 21
+      },
+      {
+        "name": "PS",
+        "display_bus_pin": 34,
+        "candidate_roles": [
+          "power_state_candidate",
+          "blanking_candidate"
+        ],
+        "current_esp32p4_gpio": 20
+      },
+      {
+        "name": "SPL",
+        "display_bus_pin": 13,
+        "candidate_roles": [
+          "line_marker_candidate",
+          "horizontal_start_candidate",
+          "data_enable_candidate"
+        ],
+        "current_esp32p4_gpio": 19
+      },
+      {
+        "name": "CLS",
+        "display_bus_pin": 7,
+        "candidate_roles": [
+          "driver_clock_candidate"
+        ],
+        "current_esp32p4_gpio": 3
+      },
+      {
+        "name": "SPS",
+        "display_bus_pin": 6,
+        "candidate_roles": [
+          "frame_marker_candidate",
+          "vertical_start_candidate"
+        ],
+        "current_esp32p4_gpio": 33
+      },
+      {
+        "name": "MOD",
+        "display_bus_pins": [
+          3,
+          4
+        ],
+        "candidate_roles": [
+          "lcd_inversion_control"
+        ],
+        "current_esp32p4_gpio": null
+      },
+      {
+        "name": "TST1",
+        "display_bus_pin": 5,
+        "candidate_roles": [
+          "factory_test"
+        ],
+        "current_esp32p4_gpio": null
+      },
+      {
+        "name": "TST2",
+        "display_bus_pin": 37,
+        "candidate_roles": [
+          "factory_test"
+        ],
+        "current_esp32p4_gpio": null
+      },
+      {
+        "name": "TST3",
+        "display_bus_pin": 38,
+        "candidate_roles": [
+          "factory_test"
+        ],
+        "current_esp32p4_gpio": null
+      }
+    ],
+    "pixel_bus": {
+      "hypothesis": "rgb666_parallel_transport",
+      "red": {
+        "R0": {
+          "display_bus_pin": 14,
+          "esp32p4_gpio": 18
+        },
+        "R1": {
+          "display_bus_pin": 15,
+          "esp32p4_gpio": 17
+        },
+        "R2": {
+          "display_bus_pin": 16,
+          "esp32p4_gpio": 16
+        },
+        "R3": {
+          "display_bus_pin": 17,
+          "esp32p4_gpio": 15
+        },
+        "R4": {
+          "display_bus_pin": 18,
+          "esp32p4_gpio": 14
+        },
+        "R5": {
+          "display_bus_pin": 19,
+          "esp32p4_gpio": 13
+        }
+      },
+      "green": {
+        "G0": {
+          "display_bus_pin": 20,
+          "esp32p4_gpio": 12
+        },
+        "G1": {
+          "display_bus_pin": 21,
+          "esp32p4_gpio": 11
+        },
+        "G2": {
+          "display_bus_pin": 22,
+          "esp32p4_gpio": 10
+        },
+        "G3": {
+          "display_bus_pin": 23,
+          "esp32p4_gpio": 9
+        },
+        "G4": {
+          "display_bus_pin": 24,
+          "esp32p4_gpio": 8
+        },
+        "G5": {
+          "display_bus_pin": 25,
+          "esp32p4_gpio": 7
+        }
+      },
+      "blue": {
+        "B0": {
+          "display_bus_pin": 26,
+          "esp32p4_gpio": 36
+        },
+        "B1": {
+          "display_bus_pin": 27,
+          "esp32p4_gpio": 45
+        },
+        "B2": {
+          "display_bus_pin": 28,
+          "esp32p4_gpio": 46
+        },
+        "B3": {
+          "display_bus_pin": 29,
+          "esp32p4_gpio": 47
+        },
+        "B4": {
+          "display_bus_pin": 30,
+          "esp32p4_gpio": 48
+        },
+        "B5": {
+          "display_bus_pin": 31,
+          "esp32p4_gpio": 50
+        }
+      }
+    },
+    "analog_or_power": [
+      {
+        "name": "VDD",
+        "display_bus_pin": 1
+      },
+      {
+        "name": "VCC",
+        "display_bus_pin": 2
+      },
+      {
+        "name": "VSS",
+        "display_bus_pin": 8
+      },
+      {
+        "name": "DGND",
+        "display_bus_pin": 33
+      },
+      {
+        "name": "VEE",
+        "display_bus_pins": [
+          9,
+          10
+        ]
+      },
+      {
+        "name": "VCOM",
+        "display_bus_pins": [
+          11,
+          12
+        ]
+      },
+      {
+        "name": "VSHD",
+        "display_bus_pin": 32
+      },
+      {
+        "name": "VSHA",
+        "display_bus_pin": 39
+      },
+      {
+        "name": "V0",
+        "display_bus_pin": 40
+      },
+      {
+        "name": "V1",
+        "display_bus_pin": 41
+      },
+      {
+        "name": "V2",
+        "display_bus_pin": 42
+      },
+      {
+        "name": "V3",
+        "display_bus_pin": 43
+      },
+      {
+        "name": "V4",
+        "display_bus_pin": 44
+      },
+      {
+        "name": "V5",
+        "display_bus_pin": 45
+      },
+      {
+        "name": "V6",
+        "display_bus_pin": 46
+      },
+      {
+        "name": "V7",
+        "display_bus_pin": 47
+      },
+      {
+        "name": "V8",
+        "display_bus_pin": 48
+      },
+      {
+        "name": "V9",
+        "display_bus_pin": 49
+      }
+    ]
+  },
+  "role_map": {
+    "sample_clock": {
+      "signal": "DCLK",
+      "esp32p4_gpio": 22,
+      "current_sample_edge": "non_inverted_pclk",
+      "evidence": "Inverted PCLK produced cyan sparkle near GAME BOY text; non-inverted PCLK removed unstable positions in repeated tests."
+    },
+    "frame_marker_candidates": [
+      {
+        "signal": "SPS",
+        "esp32p4_gpio": 33,
+        "observed_rate_hz": 59.7
+      }
+    ],
+    "line_marker_candidates": [
+      {
+        "signal": "LP",
+        "esp32p4_gpio": 21,
+        "observed_count_per_frame": 154
+      },
+      {
+        "signal": "SPL",
+        "esp32p4_gpio": 19,
+        "observed_count_per_frame": 145
+      }
+    ],
+    "data_enable_candidates": [
+      {
+        "signal": "SPL",
+        "esp32p4_gpio": 19
+      }
+    ]
+  },
+  "current_capture_profile": {
+    "name": "lcdcam_rgb565_after_sps",
+    "status": "working_gbc_source_live_view",
+    "capture_peripheral": "ESP32-P4 LCD_CAM",
+    "data_mode": "RGB565",
+    "packing": {
+      "bits_0_4": "B1..B5",
+      "bits_5_10": "G0..G5",
+      "bits_11_15": "R1..R5",
+      "bytes_per_sample": 2
+    },
+    "lcdcam_programmed_size": {
+      "width_samples": 192,
+      "height_rows": 145
+    },
+    "decoded_stream_model": {
+      "row_stride_samples": 161,
+      "rows_per_frame_period": 145,
+      "visible_crop": {
+        "width": 160,
+        "height": 144,
+        "x": 0,
+        "y": 0
+      },
+      "trailing_byte_hypothesis": "column_160_dummy_or_horizontal_porch_like_transfer"
+    },
+    "clocking": {
+      "pclk_invert": false,
+      "de_level": "high",
+      "start_marker": "SPS"
+    },
+    "transport": {
+      "firmware_command": "GBC_SOURCE_FRAME_BIN",
+      "stream_batch_size": 1
+    }
+  },
+  "true_color_capture_candidate": {
+    "name": "cpu_polled_rgb666_line_bursts",
+    "status": "offline_color_validation_only",
+    "firmware_command": "CAPTURE_RGB666_LINE_BURSTS",
+    "host_tool": "host/capture_rgb666_line_bursts.py",
+    "packing": {
+      "bytes_per_pixel": 3,
+      "byte0": "R0..R5 in bits 0..5",
+      "byte1": "G0..G5 in bits 0..5",
+      "byte2": "B0..B5 in bits 0..5"
+    },
+    "verified_artifacts": [
+      "captures/decoded/rgb666_line_bursts/20260509T115056Z-rgb666_line_bursts_160x144.json",
+      "captures/decoded/rgb666_line_bursts/20260509T115426Z-rgb666_line_bursts_160x144.json"
+    ],
+    "known_limitations": [
+      "One-frame bounded 160x144 capture completed only 15 lines before the next SPS.",
+      "Complete 160x144 RGB666 diagnostic buffers require stop_on_next_frame=false and may span multiple source frames.",
+      "This path validates color-bit preservation, not real-time true-color framing."
+    ]
+  },
+  "hardware_color_capture_candidate": {
+    "name": "lcdcam_rgb664_after_sps",
+    "status": "experimental_hardware_capture",
+    "capture_peripheral": "ESP32-P4 LCD_CAM",
+    "firmware_data_mode": "RGB664",
+    "packing": {
+      "bits_0_5": "R0..R5",
+      "bits_6_11": "G0..G5",
+      "bits_12_15": "B2..B5",
+      "bytes_per_sample": 2
+    },
+    "lcdcam_programmed_size": {
+      "width_samples": 192,
+      "height_rows": 145
+    },
+    "decoded_stream_model": {
+      "row_stride_samples": 161,
+      "rows_per_frame_period": 145,
+      "visible_crop": {
+        "width": 160,
+        "height": 144,
+        "x": 0,
+        "y": 0
+      }
+    },
+    "verified_artifacts": [
+      "captures/decoded/lcdcam_raw/20260509T153425Z-lcdcam_raw_high_192x145.json",
+      "captures/decoded/lcdcam_raw/20260509T153425Z-lcdcam_raw_high_192x145.png"
+    ],
+    "known_limitations": [
+      "B0 and B1 are not included in this 16-bit packing.",
+      "Visual geometry and byte/bit order should be compared against the active RGB565 GBC source path.",
+      "Live RGB664 currently uses per-frame command capture and remains experimental."
+    ]
+  },
+  "hardware_rgb565_capture_candidate": {
+    "name": "lcdcam_rgb565_after_sps",
+    "status": "experimental_hardware_capture",
+    "capture_peripheral": "ESP32-P4 LCD_CAM",
+    "firmware_data_mode": "RGB565",
+    "packing": {
+      "bits_0_4": "B1..B5",
+      "bits_5_10": "G0..G5",
+      "bits_11_15": "R1..R5",
+      "bytes_per_sample": 2
+    },
+    "lcdcam_programmed_size": {
+      "width_samples": 192,
+      "height_rows": 145
+    },
+    "decoded_stream_model": {
+      "row_stride_samples": 161,
+      "rows_per_frame_period": 145,
+      "visible_crop": {
+        "width": 160,
+        "height": 144,
+        "x": 0,
+        "y": 0
+      }
+    },
+    "verified_artifacts": [
+      "captures/decoded/lcdcam_raw/20260509T154430Z-lcdcam_raw_high_192x145.json",
+      "captures/decoded/lcdcam_raw/20260509T154430Z-lcdcam_raw_high_192x145.png"
+    ],
+    "known_limitations": [
+      "R0 and B0 are not included in this 16-bit packing.",
+      "Visual geometry and bit order should be rechecked with varied cartridge content.",
+      "Live RGB565 currently uses per-frame command capture; the next performance path is persistent LCD_CAM/GDMA streaming."
+    ]
+  },
+  "lessons_learned": [
+    "Keep raw capture artifacts because visual interpretation changed multiple times as row stride, edge, and crop hypotheses improved.",
+    "Readable images can still hide wrong sample edge or color-bit instability.",
+    "The target should be put into safe idle before power cycling when possible.",
+    "GBC-specific names must remain in this profile while generic tools use roles such as sample_clock, line_marker_candidate, and pixel_bus."
+  ],
+  "open_questions": [
+    "Is the extra 161st byte per row a real dummy transfer, a porch-like transfer, or a capture artifact?",
+    "Why does the current frame period appear as 145 rows when visible content is 144 rows?",
+    "What termination or strap behavior did the original LCD panel provide for disconnected lines?",
+    "Can LCD_CAM or GDMA be kept configured across frame captures for higher live frame rate?",
+    "Should full RGB666 capture be stored as packed 24-bit, packed 18-bit, or profile-defined planar data?"
+  ]
+}
