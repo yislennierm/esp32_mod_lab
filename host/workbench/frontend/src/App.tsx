@@ -272,9 +272,12 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   }
 
   const image = ctx.createImageData(renderWidth, renderHeight);
-  const gridAlpha = options.mode === 'grid' || options.mode === 'mask' || options.mode === 'gbc'
+  const requestedGridAlpha = options.mode === 'grid' || options.mode === 'mask' || options.mode === 'gbc'
     ? options.grid / 100
     : 0;
+  const gridAlpha = options.lens
+    ? Math.min(requestedGridAlpha, 0.06)
+    : requestedGridAlpha;
   const persistence = options.persistence / 100;
 
   for (let y = 0; y < visibleHeight; y += 1) {

@@ -91,6 +91,7 @@ body,
   height: 100%;
   aspect-ratio: 160 / 144;
   image-rendering: pixelated;
+  object-fit: contain;
   background: #050607;
 }
 
