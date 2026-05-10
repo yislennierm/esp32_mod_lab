@@ -39,6 +39,14 @@ import { api, ArtifactItem, DestinationProfile, PinRow, TargetProfile, Workbench
 const { Header, Sider, Content } = Layout;
 const { Text, Title } = Typography;
 
+type DestinationPinDraft = {
+  key: string;
+  signal: string;
+  role: string;
+  gpio: number | null;
+  notes: string;
+};
+
 const navItems = [
   { key: 'project', icon: <ApartmentOutlined />, label: 'Project' },
   { key: 'source', icon: <ExperimentOutlined />, label: 'Source' },
@@ -171,19 +179,48 @@ function ProcessingPage({ profile }: { profile: TargetProfile | null }) {
 }
 
 function DestinationPage({ destinationProfile }: { destinationProfile: DestinationProfile | null }) {
-  const pins = destinationProfile?.connector?.pins || [];
   const destination = destinationProfile?.destination || {};
   const spi = destination.spi || {};
   const orientation = destination.orientation || {};
   const color = destination.color || {};
   const unknowns = destinationProfile?.unknowns || [];
-  const pinRows = pins.map((pin, index) => ({
-    key: `${pin.name || index}`,
-    signal: pin.name || '?',
-    role: pin.role || '?',
-    gpio: pin.esp32p4_gpio ?? null,
-    notes: pin.notes || ''
-  }));
+  const [pinRows, setPinRows] = useState<DestinationPinDraft[]>([]);
+
+  useEffect(() => {
+    const pins = destinationProfile?.connector?.pins || [];
+    setPinRows(pins.map((pin, index) => ({
+      key: `${pin.name || index}`,
+      signal: pin.name || '?',
+      role: pin.role || '?',
+      gpio: pin.esp32p4_gpio ?? null,
+      notes: pin.notes || ''
+    })));
+  }, [destinationProfile]);
+
+  const updatePinGpio = (key: string, gpio: number | null) => {
+    setPinRows((current) => current.map((row) => row.key === key ? { ...row, gpio } : row));
+  };
+
+  const resetPinDraft = () => {
+    const pins = destinationProfile?.connector?.pins || [];
+    setPinRows(pins.map((pin, index) => ({
+      key: `${pin.name || index}`,
+      signal: pin.name || '?',
+      role: pin.role || '?',
+      gpio: pin.esp32p4_gpio ?? null,
+      notes: pin.notes || ''
+    })));
+  };
+
+  const pinDraftJson = {
+    profile_id: destinationProfile?.profile_id || 'spi_lcd_destination',
+    pin_mapping: pinRows.map((row) => ({
+      panel_pin: row.signal,
+      role: row.role,
+      esp32p4_gpio: row.gpio,
+      notes: row.notes
+    }))
+  };
 
   return (
     <div className="destinationGrid">
@@ -217,7 +254,17 @@ function DestinationPage({ destinationProfile }: { destinationProfile: Destinati
           </Space>
         </Card>
 
-        <Card title="Pin Mapping">
+        <Card
+          title="Pin Mapping"
+          extra={<Button size="small" onClick={resetPinDraft}>Reset Draft</Button>}
+        >
+          <Alert
+            type="info"
+            showIcon
+            className="inlineAlert"
+            message="Editable draft only"
+            description="Changing GPIOs here does not write the profile file, flash firmware, or drive pins. It is for planning the destination module safely."
+          />
           <Table
             size="small"
             pagination={false}
@@ -228,13 +275,24 @@ function DestinationPage({ destinationProfile }: { destinationProfile: Destinati
               {
                 title: 'ESP32-P4 GPIO',
                 dataIndex: 'gpio',
-                render: (value: number | null) => (
-                  <InputNumber min={-1} max={54} value={value ?? undefined} placeholder="TBD" disabled className="gpioInput" />
+                render: (value: number | null, row: DestinationPinDraft) => (
+                  <InputNumber
+                    min={-1}
+                    max={54}
+                    value={value ?? undefined}
+                    placeholder="TBD"
+                    disabled={row.role === 'power' || row.role === 'ground' || row.role === 'backlight_power'}
+                    className="gpioInput"
+                    onChange={(nextValue) => updatePinGpio(row.key, typeof nextValue === 'number' && nextValue >= 0 ? nextValue : null)}
+                  />
                 )
               },
               { title: 'Notes', dataIndex: 'notes' }
             ]}
           />
+          <Card size="small" title="Draft Mapping JSON" className="nestedUtilityCard">
+            <JsonBlock value={pinDraftJson} />
+          </Card>
         </Card>
 
         <Card title="Open Unknowns">

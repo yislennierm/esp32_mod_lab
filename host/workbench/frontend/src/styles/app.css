@@ -52,6 +52,14 @@ body,
   width: 88px;
 }
 
+.inlineAlert {
+  margin-bottom: 12px;
+}
+
+.nestedUtilityCard {
+  margin-top: 12px;
+}
+
 .jsonBlock,
 .logBlock {
   max-height: 52vh;
