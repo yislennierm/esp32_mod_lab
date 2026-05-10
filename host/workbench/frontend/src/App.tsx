@@ -404,7 +404,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
     <div className="liveGrid">
       <Card className="liveCard" title="Live Monitor" extra={<Badge status={statusColor(status)} text={status?.source_state || 'unknown'} />}>
         <div className="nativeLiveSurface">
-          <div className="nativeLiveFrame">
+          <div className={`nativeLiveFrame ${visualOptions.lens ? 'withLens' : 'withoutLens'}`}>
             <canvas ref={canvasRef} className="nativeLiveCanvas" width={640} height={576} />
             {visualOptions.lens ? (
               <img
