@@ -933,6 +933,10 @@ def frontend_dist_dir() -> Path:
     return Path(__file__).resolve().parent / "workbench" / "frontend" / "dist"
 
 
+def project_root_dir() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
 def make_handler(
     state: LiveLcdcamState,
     interval_ms: int,
@@ -1016,6 +1020,13 @@ def make_handler(
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             path = parsed.path
+            if path == "/assets/game_boy_color_lense_mask.png":
+                mask_path = project_root_dir() / "tools" / "game_boy_color_lense_mask.png"
+                if mask_path.exists() and mask_path.is_file():
+                    self.send_body(200, "image/png", mask_path.read_bytes())
+                else:
+                    self.send_body(404, "text/plain; charset=utf-8", b"lens mask not found\n")
+                return
             if path == "/api/profile":
                 self.send_body(200, "application/json", json.dumps(profile).encode("utf-8"))
                 return

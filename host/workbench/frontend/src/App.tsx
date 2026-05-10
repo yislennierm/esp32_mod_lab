@@ -194,6 +194,8 @@ type VisualOptions = {
   tint: number;
   contrast: number;
   persistence: number;
+  lens: boolean;
+  lensOpacity: number;
 };
 
 function drawMessage(canvas: HTMLCanvasElement, message: string) {
@@ -351,7 +353,9 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
     grid: 18,
     tint: 26,
     contrast: 92,
-    persistence: 0
+    persistence: 0,
+    lens: false,
+    lensOpacity: 88
   });
 
   useEffect(() => {
@@ -400,7 +404,17 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
     <div className="liveGrid">
       <Card className="liveCard" title="Live Monitor" extra={<Badge status={statusColor(status)} text={status?.source_state || 'unknown'} />}>
         <div className="nativeLiveSurface">
-          <canvas ref={canvasRef} className="nativeLiveCanvas" width={640} height={576} />
+          <div className="nativeLiveFrame">
+            <canvas ref={canvasRef} className="nativeLiveCanvas" width={640} height={576} />
+            {visualOptions.lens ? (
+              <img
+                className="gbcLensMask"
+                src="/assets/game_boy_color_lense_mask.png"
+                alt=""
+                style={{ opacity: visualOptions.lensOpacity / 100 }}
+              />
+            ) : null}
+          </div>
         </div>
       </Card>
       <Space direction="vertical" size="middle" className="fullWidth">
@@ -457,6 +471,19 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
             <div>
               <Text type="secondary">Persistence</Text>
               <Slider min={0} max={40} value={visualOptions.persistence} onChange={(persistence) => setVisualOptions((current) => ({ ...current, persistence }))} />
+            </div>
+            <Segmented
+              block
+              value={visualOptions.lens ? 'on' : 'off'}
+              options={[
+                { label: 'No Lens', value: 'off' },
+                { label: 'GBC Lens', value: 'on' }
+              ]}
+              onChange={(lens) => setVisualOptions((current) => ({ ...current, lens: lens === 'on' }))}
+            />
+            <div>
+              <Text type="secondary">Lens opacity</Text>
+              <Slider min={20} max={100} value={visualOptions.lensOpacity} onChange={(lensOpacity) => setVisualOptions((current) => ({ ...current, lensOpacity }))} />
             </div>
           </Space>
         </Card>
