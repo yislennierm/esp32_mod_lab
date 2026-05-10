@@ -192,6 +192,7 @@ type VisualOptions = {
   tint: number;
   contrast: number;
   persistence: number;
+  pixelGap: number;
   lens: boolean;
   lensOpacity: number;
 };
@@ -324,6 +325,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
     tint: 26,
     contrast: 92,
     persistence: 0,
+    pixelGap: 10,
     lens: false,
     lensOpacity: 88
   });
@@ -376,6 +378,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
         <div className="nativeLiveSurface">
           <div className={`nativeLiveFrame ${visualOptions.lens ? 'withLens' : 'withoutLens'}`}>
             <canvas ref={canvasRef} className="nativeLiveCanvas" width={640} height={576} />
+            <div className="sourcePixelGrid" style={{ opacity: visualOptions.pixelGap / 100 }} />
             {visualOptions.lens ? (
               <img
                 className="gbcLensMask"
@@ -431,6 +434,10 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
             <div>
               <Text type="secondary">Persistence</Text>
               <Slider min={0} max={40} value={visualOptions.persistence} onChange={(persistence) => setVisualOptions((current) => ({ ...current, persistence }))} />
+            </div>
+            <div>
+              <Text type="secondary">Pixel gaps</Text>
+              <Slider min={0} max={30} value={visualOptions.pixelGap} onChange={(pixelGap) => setVisualOptions((current) => ({ ...current, pixelGap }))} />
             </div>
             <Segmented
               block
