@@ -544,14 +544,6 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
       <Card className="liveCard" title="Live Monitor" extra={<Badge status={statusColor(status)} text={status?.source_state || 'unknown'} />}>
         <div className="nativeLiveSurface">
           <div className={`nativeLiveFrame ${visualOptions.lens ? 'withLens' : 'withoutLens'}`}>
-            {visualOptions.lens ? (
-              <img
-                className="gbcLensSizer"
-                src="/assets/game_boy_color_lense_mask.png"
-                alt=""
-                aria-hidden="true"
-              />
-            ) : null}
             <div ref={pixiHostRef} className="pixiLiveHost" />
             {visualOptions.lens ? (
               <img
