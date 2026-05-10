@@ -27,7 +27,7 @@ import {
   PlayCircleOutlined,
   ProfileOutlined
 } from '@ant-design/icons';
-import { Application, Sprite, Texture } from 'pixi.js';
+import { Application, Filter, GlProgram, Sprite, Texture } from 'pixi.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ArtifactItem, PinRow, TargetProfile, WorkbenchStatus } from './api';
 
@@ -203,7 +203,53 @@ type PixiLiveRenderer = {
   sourceCanvas: HTMLCanvasElement;
   texture: Texture;
   sprite: Sprite;
+  glassFilter: Filter;
 };
+
+const filterVertexShader = `
+in vec2 aPosition;
+out vec2 vTextureCoord;
+
+uniform vec4 uInputSize;
+uniform vec4 uOutputFrame;
+uniform vec4 uOutputTexture;
+
+vec4 filterVertexPosition(void)
+{
+    vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;
+    position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
+    position.y = position.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
+    return vec4(position, 0.0, 1.0);
+}
+
+vec2 filterTextureCoord(void)
+{
+    return aPosition * (uOutputFrame.zw * uInputSize.zw);
+}
+
+void main(void)
+{
+    gl_Position = filterVertexPosition();
+    vTextureCoord = filterTextureCoord();
+}`;
+
+const lcdGlassFragmentShader = `
+in vec2 vTextureCoord;
+out vec4 finalColor;
+
+uniform sampler2D uTexture;
+
+void main(void)
+{
+    vec4 color = texture(uTexture, vTextureCoord);
+    vec2 sourcePixel = fract(vTextureCoord * vec2(160.0, 144.0));
+    vec2 centered = abs(sourcePixel - 0.5) * 2.0;
+    float edge = smoothstep(0.78, 1.0, max(centered.x, centered.y));
+    float softCell = 1.0 - edge * 0.22;
+    vec3 glassTone = vec3(0.47, 0.53, 0.36);
+    vec3 shaded = mix(glassTone, color.rgb, softCell);
+    finalColor = vec4(shaded, color.a);
+}`;
 
 function drawMessage(canvas: HTMLCanvasElement, message: string) {
   const ctx = canvas.getContext('2d');
@@ -359,16 +405,28 @@ async function createPixiLiveRenderer(host: HTMLDivElement): Promise<PixiLiveRen
   const texture = Texture.from(sourceCanvas, true);
   texture.source.scaleMode = 'nearest';
   const sprite = new Sprite({ texture, roundPixels: true });
+  const glassFilter = Filter.from({
+    gl: {
+      vertex: filterVertexShader,
+      fragment: lcdGlassFragmentShader
+    },
+    antialias: false,
+    padding: 0,
+    resolution: 1
+  });
   app.stage.addChild(sprite);
 
-  return { app, sourceCanvas, texture, sprite };
+  return { app, sourceCanvas, texture, sprite, glassFilter };
 }
 
-function presentPixiLiveFrame(renderer: PixiLiveRenderer) {
+function presentPixiLiveFrame(renderer: PixiLiveRenderer, options: VisualOptions) {
   renderer.texture.source.resize(renderer.sourceCanvas.width, renderer.sourceCanvas.height);
   renderer.texture.source.update();
   renderer.texture.update();
   renderer.sprite.scale.set(renderer.sourceCanvas.width > 320 ? 1 : 4);
+  renderer.sprite.filters = options.mode === 'gbc' && options.pixelGap > 0
+    ? [renderer.glassFilter]
+    : [];
   renderer.app.renderer.resize(
     Math.round(renderer.sourceCanvas.width * renderer.sprite.scale.x),
     Math.round(renderer.sourceCanvas.height * renderer.sprite.scale.y)
@@ -410,7 +468,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
       renderer = created;
       pixiRendererRef.current = created;
       drawMessage(created.sourceCanvas, 'live capture stopped');
-      presentPixiLiveFrame(created);
+      presentPixiLiveFrame(created, visualOptions);
       setPixiReady(true);
     }).catch((error) => {
       setFrameError((error as Error).message);
@@ -432,7 +490,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
     if (!renderer) return;
     if (!status?.running) {
       drawMessage(renderer.sourceCanvas, 'live capture stopped');
-      presentPixiLiveFrame(renderer);
+      presentPixiLiveFrame(renderer, visualOptions);
       return;
     }
     let cancelled = false;
@@ -446,7 +504,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
         const activeRenderer = pixiRendererRef.current;
         const dataMode = String(frame.metadata.pixel_format || frame.metadata.data_mode || 'RGB565');
         drawFrame(activeRenderer.sourceCanvas, frame.bytes, dataMode, visualOptions);
-        presentPixiLiveFrame(activeRenderer);
+        presentPixiLiveFrame(activeRenderer, visualOptions);
         setFrameMeta({
           dataMode,
           bytes: frame.bytes.length,
@@ -459,7 +517,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
         if (!cancelled && pixiRendererRef.current) {
           const message = (error as Error).message.trim();
           drawMessage(pixiRendererRef.current.sourceCanvas, message.includes('waiting') ? 'waiting for source' : 'no current live frame');
-          presentPixiLiveFrame(pixiRendererRef.current);
+          presentPixiLiveFrame(pixiRendererRef.current, visualOptions);
           setFrameError(message);
         }
       } finally {
@@ -545,7 +603,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
               <Slider min={0} max={40} value={visualOptions.persistence} onChange={(persistence) => setVisualOptions((current) => ({ ...current, persistence }))} />
             </div>
             <div>
-              <Text type="secondary">Glass pixel gaps</Text>
+              <Text type="secondary">Glass cell shading</Text>
               <Slider min={0} max={18} value={visualOptions.pixelGap} onChange={(pixelGap) => setVisualOptions((current) => ({ ...current, pixelGap }))} />
             </div>
             <Segmented
