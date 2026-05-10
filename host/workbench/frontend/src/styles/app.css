@@ -67,6 +67,7 @@ body,
   place-items: center;
   min-height: calc(100vh - 150px);
   padding: 12px;
+  overflow: auto;
   background: #050607;
 }
 
@@ -93,6 +94,16 @@ body,
   image-rendering: pixelated;
   object-fit: contain;
   background: #050607;
+}
+
+.nativeLiveFrame.pixelGapRender {
+  width: auto;
+  max-width: none;
+}
+
+.nativeLiveFrame.pixelGapRender .nativeLiveCanvas {
+  width: auto;
+  height: auto;
 }
 
 .nativeLiveFrame.withLens .nativeLiveCanvas {

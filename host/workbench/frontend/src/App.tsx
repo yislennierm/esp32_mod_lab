@@ -258,7 +258,7 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   const streamWidth = 161;
   const bytesPerPixel = dataMode === 'RGB666' ? 3 : 2;
 
-  const pixelGap = options.mode === 'gbc' ? options.pixelGap : 0;
+  const pixelGap = options.mode === 'gbc' && !options.lens ? options.pixelGap : 0;
   const displayScale = pixelGap > 0 ? 6 : 1;
   const gapPixels = pixelGap > 0
     ? Math.max(1, Math.min(displayScale - 1, Math.round((pixelGap / 100) * displayScale)))
@@ -344,7 +344,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
     tint: 26,
     contrast: 92,
     persistence: 0,
-    pixelGap: 4,
+    pixelGap: 0,
     lens: false,
     lensOpacity: 88
   });
@@ -395,7 +395,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
     <div className="liveGrid">
       <Card className="liveCard" title="Live Monitor" extra={<Badge status={statusColor(status)} text={status?.source_state || 'unknown'} />}>
         <div className="nativeLiveSurface">
-          <div className={`nativeLiveFrame ${visualOptions.lens ? 'withLens' : 'withoutLens'}`}>
+          <div className={`nativeLiveFrame ${visualOptions.lens ? 'withLens' : 'withoutLens'} ${visualOptions.mode === 'gbc' && !visualOptions.lens && visualOptions.pixelGap > 0 ? 'pixelGapRender' : ''}`}>
             <canvas ref={canvasRef} className="nativeLiveCanvas" width={640} height={576} />
             {visualOptions.lens ? (
               <img
@@ -455,7 +455,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
             </div>
             <div>
               <Text type="secondary">Glass pixel gaps</Text>
-              <Slider min={0} max={30} value={visualOptions.pixelGap} onChange={(pixelGap) => setVisualOptions((current) => ({ ...current, pixelGap }))} />
+              <Slider min={0} max={18} value={visualOptions.pixelGap} onChange={(pixelGap) => setVisualOptions((current) => ({ ...current, pixelGap }))} />
             </div>
             <Segmented
               block
