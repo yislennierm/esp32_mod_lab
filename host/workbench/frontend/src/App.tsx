@@ -47,6 +47,19 @@ type DestinationPinDraft = {
   notes: string;
 };
 
+const destinationOutputRoles = new Set([
+  'spi_chip_select',
+  'panel_reset',
+  'data_command_select',
+  'spi_mosi',
+  'spi_clock'
+]);
+
+const destinationGpioOptions = Array.from({ length: 55 }, (_, gpio) => ({
+  value: gpio,
+  label: `GPIO${gpio}`
+}));
+
 const navItems = [
   { key: 'project', icon: <ApartmentOutlined />, label: 'Project' },
   { key: 'source', icon: <ExperimentOutlined />, label: 'Source' },
@@ -201,6 +214,22 @@ function DestinationPage({ destinationProfile }: { destinationProfile: Destinati
     setPinRows((current) => current.map((row) => row.key === key ? { ...row, gpio } : row));
   };
 
+  const addDraftPin = () => {
+    const nextIndex = pinRows.length + 1;
+    setPinRows((current) => [
+      ...current,
+      {
+        key: `custom_${Date.now()}`,
+        signal: `AUX${nextIndex}`,
+        role: 'aux_output_probe',
+        gpio: null,
+        notes: 'Custom lab probe pin.'
+      }
+    ]);
+  };
+
+  const mappedOutputRows = pinRows.filter((row) => row.gpio !== null && !['power', 'ground', 'backlight_power'].includes(row.role));
+
   const resetPinDraft = () => {
     const pins = destinationProfile?.connector?.pins || [];
     setPinRows(pins.map((pin, index) => ({
@@ -255,8 +284,13 @@ function DestinationPage({ destinationProfile }: { destinationProfile: Destinati
         </Card>
 
         <Card
-          title="Pin Mapping"
-          extra={<Button size="small" onClick={resetPinDraft}>Reset Draft</Button>}
+          title="Pin Map Editor"
+          extra={
+            <Space>
+              <Button size="small" onClick={addDraftPin}>Add Pin</Button>
+              <Button size="small" onClick={resetPinDraft}>Reset Draft</Button>
+            </Space>
+          }
         >
           <Alert
             type="info"
@@ -270,20 +304,64 @@ function DestinationPage({ destinationProfile }: { destinationProfile: Destinati
             pagination={false}
             dataSource={pinRows}
             columns={[
-              { title: 'Panel Pin', dataIndex: 'signal' },
-              { title: 'Role', dataIndex: 'role' },
+              {
+                title: 'Panel Pin',
+                dataIndex: 'signal',
+                render: (value: string, row: DestinationPinDraft) => (
+                  <Select
+                    className="pinSignalSelect"
+                    value={value}
+                    options={[
+                      { value: 'CS', label: 'CS' },
+                      { value: 'RESET', label: 'RESET' },
+                      { value: 'D/C', label: 'D/C' },
+                      { value: 'SDI', label: 'SDI' },
+                      { value: 'SCK', label: 'SCK' },
+                      { value: 'VCC', label: 'VCC' },
+                      { value: 'GND', label: 'GND' },
+                      { value: 'LED', label: 'LED' },
+                      { value, label: value }
+                    ]}
+                    onChange={(signal) => setPinRows((current) => current.map((pin) => pin.key === row.key ? { ...pin, signal } : pin))}
+                  />
+                )
+              },
+              {
+                title: 'Role',
+                dataIndex: 'role',
+                render: (value: string, row: DestinationPinDraft) => (
+                  <Select
+                    className="pinRoleSelect"
+                    value={value}
+                    options={[
+                      { value: 'spi_chip_select', label: 'SPI CS' },
+                      { value: 'panel_reset', label: 'Reset' },
+                      { value: 'data_command_select', label: 'D/C' },
+                      { value: 'spi_mosi', label: 'SPI MOSI' },
+                      { value: 'spi_clock', label: 'SPI SCK' },
+                      { value: 'aux_output_probe', label: 'Aux probe' },
+                      { value: 'power', label: 'Power' },
+                      { value: 'ground', label: 'Ground' },
+                      { value: 'backlight_power', label: 'Backlight' }
+                    ]}
+                    onChange={(role) => setPinRows((current) => current.map((pin) => pin.key === row.key ? { ...pin, role, gpio: destinationOutputRoles.has(role) || role === 'aux_output_probe' ? pin.gpio : null } : pin))}
+                  />
+                )
+              },
               {
                 title: 'ESP32-P4 GPIO',
                 dataIndex: 'gpio',
                 render: (value: number | null, row: DestinationPinDraft) => (
-                  <InputNumber
-                    min={-1}
-                    max={54}
+                  <Select
+                    allowClear
+                    showSearch
                     value={value ?? undefined}
                     placeholder="TBD"
                     disabled={row.role === 'power' || row.role === 'ground' || row.role === 'backlight_power'}
                     className="gpioInput"
-                    onChange={(nextValue) => updatePinGpio(row.key, typeof nextValue === 'number' && nextValue >= 0 ? nextValue : null)}
+                    options={destinationGpioOptions}
+                    optionFilterProp="label"
+                    onChange={(nextValue) => updatePinGpio(row.key, typeof nextValue === 'number' ? nextValue : null)}
                   />
                 )
               },
@@ -293,6 +371,37 @@ function DestinationPage({ destinationProfile }: { destinationProfile: Destinati
           <Card size="small" title="Draft Mapping JSON" className="nestedUtilityCard">
             <JsonBlock value={pinDraftJson} />
           </Card>
+        </Card>
+
+        <Card title="Live Pin Manipulation">
+          <Alert
+            type="warning"
+            showIcon
+            className="inlineAlert"
+            message="Firmware support pending"
+            description="These controls describe the intended lab workflow. Buttons stay disabled until DEST_GPIO probe commands exist in firmware."
+          />
+          <Table
+            size="small"
+            pagination={false}
+            dataSource={mappedOutputRows}
+            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Assign GPIOs to destination outputs first" /> }}
+            columns={[
+              { title: 'Signal', dataIndex: 'signal' },
+              { title: 'GPIO', dataIndex: 'gpio', render: (gpio: number) => <Tag>GPIO{gpio}</Tag> },
+              {
+                title: 'Controls',
+                render: () => (
+                  <Space wrap>
+                    <Button size="small" disabled>LOW</Button>
+                    <Button size="small" disabled>HIGH</Button>
+                    <Button size="small" disabled>Pulse</Button>
+                    <Button size="small" disabled>Release</Button>
+                  </Space>
+                )
+              }
+            ]}
+          />
         </Card>
 
         <Card title="Open Unknowns">

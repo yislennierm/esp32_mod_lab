@@ -49,7 +49,15 @@ body,
 }
 
 .gpioInput {
-  width: 88px;
+  width: 112px;
+}
+
+.pinSignalSelect {
+  width: 112px;
+}
+
+.pinRoleSelect {
+  width: 156px;
 }
 
 .inlineAlert {
