@@ -8,6 +8,8 @@ import {
   Layout,
   List,
   Menu,
+  Segmented,
+  Slider,
   Space,
   Statistic,
   Table,
@@ -183,6 +185,17 @@ type LiveFrameMeta = {
   receivedAt: string;
 };
 
+type VisualMode = 'clean' | 'grid' | 'mask' | 'gbc';
+
+type VisualOptions = {
+  mode: VisualMode;
+  scale: number;
+  grid: number;
+  tint: number;
+  contrast: number;
+  persistence: number;
+};
+
 function drawMessage(canvas: HTMLCanvasElement, message: string) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -196,6 +209,26 @@ function drawMessage(canvas: HTMLCanvasElement, message: string) {
 
 function scale(value: number, max: number) {
   return Math.round((value * 255) / max);
+}
+
+function clampByte(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function applyVisualColor(r: number, g: number, b: number, options: VisualOptions) {
+  const contrast = options.contrast / 100;
+  let nr = (r - 128) * contrast + 128;
+  let ng = (g - 128) * contrast + 128;
+  let nb = (b - 128) * contrast + 128;
+
+  if (options.mode === 'gbc') {
+    const tint = options.tint / 100;
+    nr = nr * (1 - tint) + 188 * tint;
+    ng = ng * (1 - tint) + 205 * tint;
+    nb = nb * (1 - tint) + 117 * tint;
+  }
+
+  return [clampByte(nr), clampByte(ng), clampByte(nb)];
 }
 
 function pixelRgb565(raw: Uint8Array, offset: number) {
@@ -212,7 +245,7 @@ function pixelRgb666(raw: Uint8Array, offset: number) {
   return [scale(raw[offset] & 63, 63), scale(raw[offset + 1] & 63, 63), scale(raw[offset + 2] & 63, 63)];
 }
 
-function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string) {
+function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string, options: VisualOptions) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   if (!['RGB565', 'RGB664', 'RGB666'].includes(dataMode)) {
@@ -223,20 +256,80 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string)
   const visibleHeight = 144;
   const streamWidth = 161;
   const bytesPerPixel = dataMode === 'RGB666' ? 3 : 2;
-  const image = ctx.createImageData(visibleWidth, visibleHeight);
+
+  const pixelScale = Math.max(2, Math.min(10, options.scale));
+  const renderWidth = visibleWidth * pixelScale;
+  const renderHeight = visibleHeight * pixelScale;
+  const previous = options.persistence > 0 && canvas.width === renderWidth && canvas.height === renderHeight
+    ? ctx.getImageData(0, 0, renderWidth, renderHeight)
+    : null;
+
+  if (canvas.width !== renderWidth || canvas.height !== renderHeight) {
+    canvas.width = renderWidth;
+    canvas.height = renderHeight;
+  }
+
+  const image = ctx.createImageData(renderWidth, renderHeight);
+  const gridAlpha = options.mode === 'grid' || options.mode === 'mask' || options.mode === 'gbc'
+    ? options.grid / 100
+    : 0;
+  const persistence = options.persistence / 100;
+
   for (let y = 0; y < visibleHeight; y += 1) {
     for (let x = 0; x < visibleWidth; x += 1) {
       const src = (y * streamWidth + x) * bytesPerPixel;
-      const [r, g, b] = dataMode === 'RGB565'
+      const rgb = dataMode === 'RGB565'
         ? pixelRgb565(raw, src)
         : dataMode === 'RGB664'
           ? pixelRgb664(raw, src)
           : pixelRgb666(raw, src);
-      const dst = (y * visibleWidth + x) * 4;
-      image.data[dst] = r;
-      image.data[dst + 1] = g;
-      image.data[dst + 2] = b;
-      image.data[dst + 3] = 255;
+      const [r, g, b] = applyVisualColor(rgb[0], rgb[1], rgb[2], options);
+
+      for (let py = 0; py < pixelScale; py += 1) {
+        for (let px = 0; px < pixelScale; px += 1) {
+          const dx = x * pixelScale + px;
+          const dy = y * pixelScale + py;
+          const dst = (dy * renderWidth + dx) * 4;
+          let sr = r;
+          let sg = g;
+          let sb = b;
+
+          if (options.mode === 'mask' || options.mode === 'gbc') {
+            const sub = px % 3;
+            const boost = options.mode === 'gbc' ? 1.08 : 1.12;
+            const dim = options.mode === 'gbc' ? 0.78 : 0.72;
+            sr *= sub === 0 ? boost : dim;
+            sg *= sub === 1 ? boost : dim;
+            sb *= sub === 2 ? boost : dim;
+          }
+
+          if (gridAlpha > 0 && (px === 0 || py === 0)) {
+            sr *= 1 - gridAlpha;
+            sg *= 1 - gridAlpha;
+            sb *= 1 - gridAlpha;
+          }
+
+          if (options.mode === 'gbc') {
+            const edgeX = Math.min(dx, renderWidth - 1 - dx) / renderWidth;
+            const edgeY = Math.min(dy, renderHeight - 1 - dy) / renderHeight;
+            const vignette = 0.88 + Math.min(edgeX, edgeY) * 1.6;
+            sr *= Math.min(1, vignette);
+            sg *= Math.min(1, vignette);
+            sb *= Math.min(1, vignette);
+          }
+
+          if (previous && persistence > 0) {
+            sr = sr * (1 - persistence) + previous.data[dst] * persistence;
+            sg = sg * (1 - persistence) + previous.data[dst + 1] * persistence;
+            sb = sb * (1 - persistence) + previous.data[dst + 2] * persistence;
+          }
+
+          image.data[dst] = clampByte(sr);
+          image.data[dst + 1] = clampByte(sg);
+          image.data[dst + 2] = clampByte(sb);
+          image.data[dst + 3] = 255;
+        }
+      }
     }
   }
   ctx.putImageData(image, 0, 0);
@@ -252,6 +345,14 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [frameMeta, setFrameMeta] = useState<LiveFrameMeta | null>(null);
   const [frameError, setFrameError] = useState('');
+  const [visualOptions, setVisualOptions] = useState<VisualOptions>({
+    mode: 'clean',
+    scale: 4,
+    grid: 18,
+    tint: 26,
+    contrast: 92,
+    persistence: 0
+  });
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -268,7 +369,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
         const frame = await api.frame();
         if (cancelled || !canvasRef.current) return;
         const dataMode = String(frame.metadata.pixel_format || frame.metadata.data_mode || 'RGB565');
-        drawFrame(canvasRef.current, frame.bytes, dataMode);
+        drawFrame(canvasRef.current, frame.bytes, dataMode, visualOptions);
         setFrameMeta({
           dataMode,
           bytes: frame.bytes.length,
@@ -293,36 +394,73 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [status?.running]);
+  }, [status?.running, visualOptions]);
 
   return (
     <div className="liveGrid">
       <Card className="liveCard" title="Live Monitor" extra={<Badge status={statusColor(status)} text={status?.source_state || 'unknown'} />}>
         <div className="nativeLiveSurface">
-          <canvas ref={canvasRef} className="nativeLiveCanvas" width={160} height={144} />
+          <canvas ref={canvasRef} className="nativeLiveCanvas" width={640} height={576} />
         </div>
       </Card>
-      <Card title="Controls">
-        <Space direction="vertical" className="fullWidth">
-          <Space wrap>
-            <Button type="primary" onClick={onStart}>Start</Button>
-            <Button danger onClick={onStop}>Stop</Button>
-            <Button onClick={onRecover}>Recover</Button>
-            <Button onClick={onSafeIdle}>Safe Idle</Button>
+      <Space direction="vertical" size="middle" className="fullWidth">
+        <Card title="Controls">
+          <Space direction="vertical" className="fullWidth">
+            <Space wrap>
+              <Button type="primary" onClick={onStart}>Start</Button>
+              <Button danger onClick={onStop}>Stop</Button>
+              <Button onClick={onRecover}>Recover</Button>
+              <Button onClick={onSafeIdle}>Safe Idle</Button>
+            </Space>
+            <Descriptions size="small" bordered column={1}>
+              <Descriptions.Item label="Running">{String(status?.running ?? false)}</Descriptions.Item>
+              <Descriptions.Item label="FPS">{status?.server_capture_fps ?? '?'}</Descriptions.Item>
+              <Descriptions.Item label="Frame age">{status?.server_frame_age_ms ?? '?'} ms</Descriptions.Item>
+              <Descriptions.Item label="Mode">{frameMeta?.dataMode || '?'}</Descriptions.Item>
+              <Descriptions.Item label="Bytes">{frameMeta?.bytes ?? '?'}</Descriptions.Item>
+              <Descriptions.Item label="Frame">{frameMeta?.frame ?? '?'}</Descriptions.Item>
+              <Descriptions.Item label="Received">{frameMeta?.receivedAt || '?'}</Descriptions.Item>
+              <Descriptions.Item label="Error">{status?.error || ''}</Descriptions.Item>
+            </Descriptions>
+            {frameError ? <Alert type="warning" showIcon message="Live frame issue" description={frameError} /> : null}
           </Space>
-          <Descriptions size="small" bordered column={1}>
-            <Descriptions.Item label="Running">{String(status?.running ?? false)}</Descriptions.Item>
-            <Descriptions.Item label="FPS">{status?.server_capture_fps ?? '?'}</Descriptions.Item>
-            <Descriptions.Item label="Frame age">{status?.server_frame_age_ms ?? '?'} ms</Descriptions.Item>
-            <Descriptions.Item label="Mode">{frameMeta?.dataMode || '?'}</Descriptions.Item>
-            <Descriptions.Item label="Bytes">{frameMeta?.bytes ?? '?'}</Descriptions.Item>
-            <Descriptions.Item label="Frame">{frameMeta?.frame ?? '?'}</Descriptions.Item>
-            <Descriptions.Item label="Received">{frameMeta?.receivedAt || '?'}</Descriptions.Item>
-            <Descriptions.Item label="Error">{status?.error || ''}</Descriptions.Item>
-          </Descriptions>
-          {frameError ? <Alert type="warning" showIcon message="Live frame issue" description={frameError} /> : null}
-        </Space>
-      </Card>
+        </Card>
+        <Card title="Visuals">
+          <Space direction="vertical" className="fullWidth">
+            <Segmented
+              block
+              value={visualOptions.mode}
+              options={[
+                { label: 'Clean', value: 'clean' },
+                { label: 'Grid', value: 'grid' },
+                { label: 'LCD Mask', value: 'mask' },
+                { label: 'GBC LCD', value: 'gbc' }
+              ]}
+              onChange={(mode) => setVisualOptions((current) => ({ ...current, mode: mode as VisualMode }))}
+            />
+            <div>
+              <Text type="secondary">Scale</Text>
+              <Slider min={2} max={8} step={1} value={visualOptions.scale} onChange={(scaleValue) => setVisualOptions((current) => ({ ...current, scale: scaleValue }))} />
+            </div>
+            <div>
+              <Text type="secondary">Grid strength</Text>
+              <Slider min={0} max={45} value={visualOptions.grid} onChange={(grid) => setVisualOptions((current) => ({ ...current, grid }))} />
+            </div>
+            <div>
+              <Text type="secondary">LCD tint</Text>
+              <Slider min={0} max={70} value={visualOptions.tint} onChange={(tint) => setVisualOptions((current) => ({ ...current, tint }))} />
+            </div>
+            <div>
+              <Text type="secondary">Contrast</Text>
+              <Slider min={70} max={130} value={visualOptions.contrast} onChange={(contrast) => setVisualOptions((current) => ({ ...current, contrast }))} />
+            </div>
+            <div>
+              <Text type="secondary">Persistence</Text>
+              <Slider min={0} max={40} value={visualOptions.persistence} onChange={(persistence) => setVisualOptions((current) => ({ ...current, persistence }))} />
+            </div>
+          </Space>
+        </Card>
+      </Space>
     </div>
   );
 }
