@@ -259,7 +259,7 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   const streamWidth = 161;
   const bytesPerPixel = dataMode === 'RGB666' ? 3 : 2;
 
-  const pixelScale = Math.max(2, Math.min(10, options.scale));
+  const pixelScale = options.scale <= 4 ? 3 : 6;
   const renderWidth = visibleWidth * pixelScale;
   const renderHeight = visibleHeight * pixelScale;
   const previous = options.persistence > 0 && canvas.width === renderWidth && canvas.height === renderHeight
@@ -352,7 +352,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
   const [frameError, setFrameError] = useState('');
   const [visualOptions, setVisualOptions] = useState<VisualOptions>({
     mode: 'clean',
-    scale: 4,
+    scale: 6,
     grid: 18,
     tint: 26,
     contrast: 92,
@@ -456,8 +456,15 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
               onChange={(mode) => setVisualOptions((current) => ({ ...current, mode: mode as VisualMode }))}
             />
             <div>
-              <Text type="secondary">Scale</Text>
-              <Slider min={2} max={8} step={1} value={visualOptions.scale} onChange={(scaleValue) => setVisualOptions((current) => ({ ...current, scale: scaleValue }))} />
+              <Text type="secondary">LCD render scale</Text>
+              <Slider
+                min={3}
+                max={6}
+                step={3}
+                marks={{ 3: '3x', 6: '6x' }}
+                value={visualOptions.scale}
+                onChange={(scaleValue) => setVisualOptions((current) => ({ ...current, scale: scaleValue }))}
+              />
             </div>
             <div>
               <Text type="secondary">Grid strength</Text>
