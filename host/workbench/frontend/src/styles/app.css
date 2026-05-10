@@ -83,6 +83,7 @@ body,
 
 .nativeLiveFrame.withLens {
   width: min(100%, calc((100vh - 190px) * 1.1155));
+  max-width: 960px;
   aspect-ratio: 1140 / 1022;
 }
 
@@ -127,6 +128,15 @@ body,
   z-index: 1;
   width: 72.98%;
   height: auto;
+}
+
+.gbcLensSizer {
+  display: block;
+  width: 100%;
+  height: auto;
+  visibility: hidden;
+  pointer-events: none;
+  user-select: none;
 }
 
 .gbcLensMask {
