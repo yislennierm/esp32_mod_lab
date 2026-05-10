@@ -185,12 +185,10 @@ type LiveFrameMeta = {
   receivedAt: string;
 };
 
-type VisualMode = 'clean' | 'grid' | 'mask' | 'gbc';
+type VisualMode = 'clean' | 'gbc';
 
 type VisualOptions = {
   mode: VisualMode;
-  scale: number;
-  grid: number;
   tint: number;
   contrast: number;
   persistence: number;
@@ -259,9 +257,8 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   const streamWidth = 161;
   const bytesPerPixel = dataMode === 'RGB666' ? 3 : 2;
 
-  const pixelScale = options.scale <= 4 ? 3 : 6;
-  const renderWidth = visibleWidth * pixelScale;
-  const renderHeight = visibleHeight * pixelScale;
+  const renderWidth = visibleWidth;
+  const renderHeight = visibleHeight;
   const previous = options.persistence > 0 && canvas.width === renderWidth && canvas.height === renderHeight
     ? ctx.getImageData(0, 0, renderWidth, renderHeight)
     : null;
@@ -272,12 +269,6 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   }
 
   const image = ctx.createImageData(renderWidth, renderHeight);
-  const requestedGridAlpha = options.mode === 'grid' || options.mode === 'mask' || options.mode === 'gbc'
-    ? options.grid / 100
-    : 0;
-  const gridAlpha = options.lens
-    ? Math.min(requestedGridAlpha, 0.06)
-    : requestedGridAlpha;
   const persistence = options.persistence / 100;
 
   for (let y = 0; y < visibleHeight; y += 1) {
@@ -289,52 +280,30 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
           ? pixelRgb664(raw, src)
           : pixelRgb666(raw, src);
       const [r, g, b] = applyVisualColor(rgb[0], rgb[1], rgb[2], options);
+      const dst = (y * renderWidth + x) * 4;
+      let sr = r;
+      let sg = g;
+      let sb = b;
 
-      for (let py = 0; py < pixelScale; py += 1) {
-        for (let px = 0; px < pixelScale; px += 1) {
-          const dx = x * pixelScale + px;
-          const dy = y * pixelScale + py;
-          const dst = (dy * renderWidth + dx) * 4;
-          let sr = r;
-          let sg = g;
-          let sb = b;
-
-          if (options.mode === 'mask' || options.mode === 'gbc') {
-            const sub = px % 3;
-            const boost = options.mode === 'gbc' ? 1.08 : 1.12;
-            const dim = options.mode === 'gbc' ? 0.78 : 0.72;
-            sr *= sub === 0 ? boost : dim;
-            sg *= sub === 1 ? boost : dim;
-            sb *= sub === 2 ? boost : dim;
-          }
-
-          if (gridAlpha > 0 && (px === 0 || py === 0)) {
-            sr *= 1 - gridAlpha;
-            sg *= 1 - gridAlpha;
-            sb *= 1 - gridAlpha;
-          }
-
-          if (options.mode === 'gbc') {
-            const edgeX = Math.min(dx, renderWidth - 1 - dx) / renderWidth;
-            const edgeY = Math.min(dy, renderHeight - 1 - dy) / renderHeight;
-            const vignette = 0.88 + Math.min(edgeX, edgeY) * 1.6;
-            sr *= Math.min(1, vignette);
-            sg *= Math.min(1, vignette);
-            sb *= Math.min(1, vignette);
-          }
-
-          if (previous && persistence > 0) {
-            sr = sr * (1 - persistence) + previous.data[dst] * persistence;
-            sg = sg * (1 - persistence) + previous.data[dst + 1] * persistence;
-            sb = sb * (1 - persistence) + previous.data[dst + 2] * persistence;
-          }
-
-          image.data[dst] = clampByte(sr);
-          image.data[dst + 1] = clampByte(sg);
-          image.data[dst + 2] = clampByte(sb);
-          image.data[dst + 3] = 255;
-        }
+      if (options.mode === 'gbc') {
+        const edgeX = Math.min(x, renderWidth - 1 - x) / renderWidth;
+        const edgeY = Math.min(y, renderHeight - 1 - y) / renderHeight;
+        const vignette = 0.88 + Math.min(edgeX, edgeY) * 1.6;
+        sr *= Math.min(1, vignette);
+        sg *= Math.min(1, vignette);
+        sb *= Math.min(1, vignette);
       }
+
+      if (previous && persistence > 0) {
+        sr = sr * (1 - persistence) + previous.data[dst] * persistence;
+        sg = sg * (1 - persistence) + previous.data[dst + 1] * persistence;
+        sb = sb * (1 - persistence) + previous.data[dst + 2] * persistence;
+      }
+
+      image.data[dst] = clampByte(sr);
+      image.data[dst + 1] = clampByte(sg);
+      image.data[dst + 2] = clampByte(sb);
+      image.data[dst + 3] = 255;
     }
   }
   ctx.putImageData(image, 0, 0);
@@ -352,8 +321,6 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
   const [frameError, setFrameError] = useState('');
   const [visualOptions, setVisualOptions] = useState<VisualOptions>({
     mode: 'clean',
-    scale: 6,
-    grid: 18,
     tint: 26,
     contrast: 92,
     persistence: 0,
@@ -448,28 +415,11 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
               block
               value={visualOptions.mode}
               options={[
-                { label: 'Clean', value: 'clean' },
-                { label: 'Grid', value: 'grid' },
-                { label: 'LCD Mask', value: 'mask' },
-                { label: 'GBC LCD', value: 'gbc' }
+                { label: 'Source', value: 'clean' },
+                { label: 'GBC Glass', value: 'gbc' }
               ]}
               onChange={(mode) => setVisualOptions((current) => ({ ...current, mode: mode as VisualMode }))}
             />
-            <div>
-              <Text type="secondary">LCD render scale</Text>
-              <Slider
-                min={3}
-                max={6}
-                step={3}
-                marks={{ 3: '3x', 6: '6x' }}
-                value={visualOptions.scale}
-                onChange={(scaleValue) => setVisualOptions((current) => ({ ...current, scale: scaleValue }))}
-              />
-            </div>
-            <div>
-              <Text type="secondary">Grid strength</Text>
-              <Slider min={0} max={45} value={visualOptions.grid} onChange={(grid) => setVisualOptions((current) => ({ ...current, grid }))} />
-            </div>
             <div>
               <Text type="secondary">LCD tint</Text>
               <Slider min={0} max={70} value={visualOptions.tint} onChange={(tint) => setVisualOptions((current) => ({ ...current, tint }))} />
