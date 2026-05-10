@@ -1,0 +1,204 @@
+{
+  "schema_version": "0.1",
+  "profile_id": "spi_lcd_destination",
+  "display_name": "Generic SPI LCD Destination",
+  "status": "draft_unwired",
+  "target_type": "destination_spi_lcd",
+  "source_documents": [
+    "docs/destination_spi_lcd_lab.md",
+    "https://docs.espressif.com/projects/esp-idf/en/stable/esp32p4/api-reference/peripherals/lcd/spi_lcd.html"
+  ],
+  "safety": {
+    "default_gpio_mode": "high_impedance_until_dest_init",
+    "esp32p4_gpio_5v_tolerant": false,
+    "dangerous_rails": [
+      "VCC",
+      "LED"
+    ],
+    "do_not_connect_to_gpio": [
+      "VCC",
+      "LED"
+    ],
+    "known_concerns": [
+      "Panel VCC and LED are powered externally at 5 V.",
+      "SPI/control logic voltage compatibility is not yet verified.",
+      "Destination output pins must remain disabled at boot and until explicit init.",
+      "Shared ground is required before SPI signaling."
+    ]
+  },
+  "connector": {
+    "pin_count": 8,
+    "pin_numbering_basis": "user_provided_signal_names",
+    "pins": [
+      {
+        "name": "VCC",
+        "role": "power",
+        "esp32p4_gpio": null,
+        "notes": "Externally powered 5 V. Do not drive from GPIO."
+      },
+      {
+        "name": "GND",
+        "role": "ground",
+        "esp32p4_gpio": null,
+        "notes": "Connect to ESP32-P4 ground."
+      },
+      {
+        "name": "CS",
+        "role": "spi_chip_select",
+        "esp32p4_gpio": null,
+        "notes": "Output after DEST_SPI_LCD_INIT only."
+      },
+      {
+        "name": "RESET",
+        "role": "panel_reset",
+        "esp32p4_gpio": null,
+        "notes": "Output after DEST_SPI_LCD_INIT only."
+      },
+      {
+        "name": "D/C",
+        "role": "data_command_select",
+        "esp32p4_gpio": null,
+        "notes": "Output after DEST_SPI_LCD_INIT only."
+      },
+      {
+        "name": "SDI",
+        "role": "spi_mosi",
+        "esp32p4_gpio": null,
+        "notes": "Output after DEST_SPI_LCD_INIT only."
+      },
+      {
+        "name": "SCK",
+        "role": "spi_clock",
+        "esp32p4_gpio": null,
+        "notes": "Output after DEST_SPI_LCD_INIT only."
+      },
+      {
+        "name": "LED",
+        "role": "backlight_power",
+        "esp32p4_gpio": null,
+        "notes": "Externally powered 5 V. Do not drive from GPIO."
+      }
+    ]
+  },
+  "signals": {
+    "timing_or_control": [
+      {
+        "name": "CS",
+        "candidate_roles": [
+          "spi_chip_select"
+        ],
+        "current_esp32p4_gpio": null,
+        "direction": "esp32p4_output_after_init"
+      },
+      {
+        "name": "RESET",
+        "candidate_roles": [
+          "panel_reset"
+        ],
+        "current_esp32p4_gpio": null,
+        "direction": "esp32p4_output_after_init"
+      },
+      {
+        "name": "D/C",
+        "candidate_roles": [
+          "lcd_data_command_select"
+        ],
+        "current_esp32p4_gpio": null,
+        "direction": "esp32p4_output_after_init"
+      },
+      {
+        "name": "SCK",
+        "candidate_roles": [
+          "spi_clock"
+        ],
+        "current_esp32p4_gpio": null,
+        "direction": "esp32p4_output_after_init"
+      }
+    ],
+    "pixel_bus": {
+      "transport": "spi_mosi",
+      "data_signal": {
+        "name": "SDI",
+        "current_esp32p4_gpio": null,
+        "direction": "esp32p4_output_after_init"
+      },
+      "initial_color_format": "RGB565",
+      "native_resolution": null,
+      "controller_ic": null
+    },
+    "analog_or_power": [
+      {
+        "name": "VCC",
+        "candidate_roles": [
+          "external_5v_power"
+        ],
+        "current_esp32p4_gpio": null
+      },
+      {
+        "name": "GND",
+        "candidate_roles": [
+          "common_ground"
+        ],
+        "current_esp32p4_gpio": null
+      },
+      {
+        "name": "LED",
+        "candidate_roles": [
+          "external_5v_backlight_power"
+        ],
+        "current_esp32p4_gpio": null
+      }
+    ]
+  },
+  "destination": {
+    "interface": "spi",
+    "driver_family": "esp_lcd_spi_panel",
+    "controller_ic": null,
+    "native_resolution": null,
+    "orientation": {
+      "swap_xy": false,
+      "mirror_x": false,
+      "mirror_y": false
+    },
+    "color": {
+      "input_format": "RGB565",
+      "color_order": "unknown",
+      "invert_color": false
+    },
+    "spi": {
+      "host": "TBD",
+      "pclk_hz_initial": 10000000,
+      "pclk_hz_sweep": [
+        10000000,
+        20000000,
+        40000000
+      ],
+      "mode": 0,
+      "cmd_bits": 8,
+      "param_bits": 8,
+      "max_transfer_lines_initial": 40
+    },
+    "lab_commands": [
+      "DEST_SPI_LCD_STATUS",
+      "DEST_SPI_LCD_INIT",
+      "DEST_SPI_LCD_SAFE_OFF",
+      "DEST_SPI_LCD_TEST_PATTERN",
+      "DEST_SPI_LCD_CLEAR",
+      "DEST_SPI_LCD_SHOW_LAST_SOURCE_FRAME",
+      "DEST_SPI_LCD_MIRROR_START",
+      "DEST_SPI_LCD_MIRROR_STOP"
+    ],
+    "boot_policy": "disabled_until_explicit_init"
+  },
+  "unknowns": [
+    "controller_ic",
+    "native_resolution",
+    "logic_voltage_compatibility",
+    "gpio_assignment",
+    "required_init_sequence",
+    "color_order",
+    "orientation",
+    "safe_spi_clock",
+    "source_capture_resource_conflicts"
+  ]
+}

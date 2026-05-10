@@ -42,6 +42,47 @@ export type TargetProfile = {
   };
 };
 
+export type DestinationProfile = TargetProfile & {
+  connector?: {
+    pin_count?: number;
+    pin_numbering_basis?: string;
+    pins?: Array<{
+      name?: string;
+      role?: string;
+      esp32p4_gpio?: number | null;
+      notes?: string;
+    }>;
+  };
+  destination?: {
+    interface?: string;
+    driver_family?: string;
+    controller_ic?: string | null;
+    native_resolution?: { width?: number; height?: number } | null;
+    orientation?: {
+      swap_xy?: boolean;
+      mirror_x?: boolean;
+      mirror_y?: boolean;
+    };
+    color?: {
+      input_format?: string;
+      color_order?: string;
+      invert_color?: boolean;
+    };
+    spi?: {
+      host?: string;
+      pclk_hz_initial?: number;
+      pclk_hz_sweep?: number[];
+      mode?: number;
+      cmd_bits?: number;
+      param_bits?: number;
+      max_transfer_lines_initial?: number;
+    };
+    lab_commands?: string[];
+    boot_policy?: string;
+  };
+  unknowns?: string[];
+};
+
 export type ArtifactItem = {
   name: string;
   path: string;
@@ -75,6 +116,7 @@ async function getJson<T>(path: string): Promise<T> {
 export const api = {
   status: () => getJson<WorkbenchStatus>('/api/status'),
   profile: () => getJson<TargetProfile>('/api/profile'),
+  destinationProfile: () => getJson<DestinationProfile>('/api/destination-profile'),
   artifacts: () => getJson<{ ok: boolean; root: string; items: ArtifactItem[] }>('/api/artifacts/recent'),
   gpios: () => getJson<{ ok: boolean; profile_id: string; gpios: PinRow[] }>('/api/workbench/gpios'),
   readGpios: () => getJson<{ ok: boolean; results: Array<Record<string, unknown>> }>('/api/workbench/read-gpios'),

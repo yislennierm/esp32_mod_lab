@@ -7,6 +7,7 @@ The profile files are intentionally data-first. Firmware and host tools should u
 ## Current Profiles
 
 - `gbc_lcd.json` - Game Boy Color LCD bus, the first proof target.
+- `spi_lcd_destination.json` - draft generic SPI LCD/IPS destination profile.
 
 ## Schema Status
 

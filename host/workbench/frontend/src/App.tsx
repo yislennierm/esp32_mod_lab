@@ -5,13 +5,18 @@ import {
   Card,
   Descriptions,
   Empty,
+  Form,
+  InputNumber,
   Layout,
   List,
   Menu,
   Segmented,
+  Select,
   Slider,
   Space,
   Statistic,
+  Steps,
+  Switch,
   Table,
   Tag,
   Typography
@@ -29,7 +34,7 @@ import {
 } from '@ant-design/icons';
 import { Application, Filter, GlProgram, Sprite, Texture } from 'pixi.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, ArtifactItem, PinRow, TargetProfile, WorkbenchStatus } from './api';
+import { api, ArtifactItem, DestinationProfile, PinRow, TargetProfile, WorkbenchStatus } from './api';
 
 const { Header, Sider, Content } = Layout;
 const { Text, Title } = Typography;
@@ -165,16 +170,142 @@ function ProcessingPage({ profile }: { profile: TargetProfile | null }) {
   );
 }
 
-function DestinationPage() {
+function DestinationPage({ destinationProfile }: { destinationProfile: DestinationProfile | null }) {
+  const pins = destinationProfile?.connector?.pins || [];
+  const destination = destinationProfile?.destination || {};
+  const spi = destination.spi || {};
+  const orientation = destination.orientation || {};
+  const color = destination.color || {};
+  const unknowns = destinationProfile?.unknowns || [];
+  const pinRows = pins.map((pin, index) => ({
+    key: `${pin.name || index}`,
+    signal: pin.name || '?',
+    role: pin.role || '?',
+    gpio: pin.esp32p4_gpio ?? null,
+    notes: pin.notes || ''
+  }));
+
   return (
-    <Card>
-      <Empty
-        image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description="No destination profile configured yet"
-      >
-        <Text type="secondary">Next: choose a panel/protocol, document electrical requirements, and add test-pattern output before source-to-panel bridging.</Text>
-      </Empty>
-    </Card>
+    <div className="destinationGrid">
+      <Space direction="vertical" size="middle" className="fullWidth">
+        <Card title="SPI LCD Destination">
+          <Space direction="vertical" size="middle" className="fullWidth">
+            <Alert
+              type="warning"
+              showIcon
+              message="Destination outputs are disabled by default"
+              description="This UI is a lab planning surface. Firmware commands for SPI LCD output are not active yet, and no ESP32-P4 GPIO should drive the panel until the destination module is explicitly implemented and initialized."
+            />
+            <Steps
+              size="small"
+              current={0}
+              items={[
+                { title: 'Identify', description: 'Controller, resolution, logic voltage' },
+                { title: 'Map Pins', description: 'CS, RESET, D/C, SDI, SCK' },
+                { title: 'Pattern', description: 'Standalone test output' },
+                { title: 'Frame', description: 'Show last RGB565 source frame' },
+                { title: 'Mirror', description: 'Optional lab mirror mode' }
+              ]}
+            />
+            <Descriptions bordered size="small" column={2}>
+              <Descriptions.Item label="Profile">{destinationProfile?.profile_id || 'not loaded'}</Descriptions.Item>
+              <Descriptions.Item label="Status">{destinationProfile?.status || '?'}</Descriptions.Item>
+              <Descriptions.Item label="Interface">{destination.interface || '?'}</Descriptions.Item>
+              <Descriptions.Item label="Driver">{destination.driver_family || '?'}</Descriptions.Item>
+              <Descriptions.Item label="Boot policy" span={2}>{destination.boot_policy || '?'}</Descriptions.Item>
+            </Descriptions>
+          </Space>
+        </Card>
+
+        <Card title="Pin Mapping">
+          <Table
+            size="small"
+            pagination={false}
+            dataSource={pinRows}
+            columns={[
+              { title: 'Panel Pin', dataIndex: 'signal' },
+              { title: 'Role', dataIndex: 'role' },
+              {
+                title: 'ESP32-P4 GPIO',
+                dataIndex: 'gpio',
+                render: (value: number | null) => (
+                  <InputNumber min={-1} max={54} value={value ?? undefined} placeholder="TBD" disabled className="gpioInput" />
+                )
+              },
+              { title: 'Notes', dataIndex: 'notes' }
+            ]}
+          />
+        </Card>
+
+        <Card title="Open Unknowns">
+          <Space wrap>
+            {unknowns.length > 0 ? unknowns.map((unknown) => <Tag key={unknown}>{unknown}</Tag>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No unknowns listed" />}
+          </Space>
+        </Card>
+      </Space>
+
+      <Space direction="vertical" size="middle" className="fullWidth">
+        <Card title="Panel Parameters">
+          <Form layout="vertical" disabled>
+            <Form.Item label="Controller">
+              <Select
+                value={destination.controller_ic || 'unknown'}
+                options={[
+                  { value: 'unknown', label: 'Unknown' },
+                  { value: 'st7789', label: 'ST7789' },
+                  { value: 'st7735', label: 'ST7735' },
+                  { value: 'ili9341', label: 'ILI9341' },
+                  { value: 'gc9a01', label: 'GC9A01' }
+                ]}
+              />
+            </Form.Item>
+            <Space className="fullWidth" size="middle">
+              <Form.Item label="Width" className="fullWidth">
+                <InputNumber min={1} value={destination.native_resolution?.width} placeholder="TBD" className="fullWidth" />
+              </Form.Item>
+              <Form.Item label="Height" className="fullWidth">
+                <InputNumber min={1} value={destination.native_resolution?.height} placeholder="TBD" className="fullWidth" />
+              </Form.Item>
+            </Space>
+            <Form.Item label="SPI clock">
+              <InputNumber min={1000000} value={spi.pclk_hz_initial} addonAfter="Hz" className="fullWidth" />
+            </Form.Item>
+            <Space wrap>
+              <Form.Item label="SPI mode"><InputNumber min={0} max={3} value={spi.mode} /></Form.Item>
+              <Form.Item label="Command bits"><InputNumber min={8} max={16} value={spi.cmd_bits} /></Form.Item>
+              <Form.Item label="Param bits"><InputNumber min={8} max={16} value={spi.param_bits} /></Form.Item>
+            </Space>
+            <Space wrap>
+              <Form.Item label="Swap XY"><Switch checked={Boolean(orientation.swap_xy)} /></Form.Item>
+              <Form.Item label="Mirror X"><Switch checked={Boolean(orientation.mirror_x)} /></Form.Item>
+              <Form.Item label="Mirror Y"><Switch checked={Boolean(orientation.mirror_y)} /></Form.Item>
+              <Form.Item label="Invert"><Switch checked={Boolean(color.invert_color)} /></Form.Item>
+            </Space>
+            <Form.Item label="Color order">
+              <Select
+                value={color.color_order || 'unknown'}
+                options={[
+                  { value: 'unknown', label: 'Unknown' },
+                  { value: 'rgb', label: 'RGB' },
+                  { value: 'bgr', label: 'BGR' }
+                ]}
+              />
+            </Form.Item>
+          </Form>
+        </Card>
+
+        <Card title="Lab Actions">
+          <Space direction="vertical" className="fullWidth">
+            <Button block disabled>DEST_SPI_LCD_STATUS</Button>
+            <Button block disabled>DEST_SPI_LCD_INIT</Button>
+            <Button block disabled>TEST_PATTERN color_bars</Button>
+            <Button block disabled>SHOW_LAST_SOURCE_FRAME</Button>
+            <Button block danger disabled>DEST_SPI_LCD_SAFE_OFF</Button>
+            <Text type="secondary">Actions are placeholders until firmware support exists.</Text>
+          </Space>
+        </Card>
+      </Space>
+    </div>
   );
 }
 
@@ -693,6 +824,7 @@ export default function App() {
   const [selected, setSelected] = useState('project');
   const [status, setStatus] = useState<WorkbenchStatus | null>(null);
   const [profile, setProfile] = useState<TargetProfile | null>(null);
+  const [destinationProfile, setDestinationProfile] = useState<DestinationProfile | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactItem[]>([]);
   const [pins, setPins] = useState<PinRow[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
@@ -710,6 +842,7 @@ export default function App() {
 
   useEffect(() => {
     api.profile().then(setProfile).catch((error) => log(`profile error ${error.message}`));
+    api.destinationProfile().then(setDestinationProfile).catch((error) => log(`destination profile error ${error.message}`));
     api.artifacts().then((data) => setArtifacts(data.items)).catch((error) => log(`artifacts error ${error.message}`));
     api.gpios().then((data) => setPins(data.gpios)).catch((error) => log(`gpios error ${error.message}`));
     refresh();
@@ -727,7 +860,7 @@ export default function App() {
   const page = selected === 'project' ? <ProjectPage profile={profile} status={status} /> :
     selected === 'source' ? <SourcePage profile={profile} pins={pins} /> :
     selected === 'processing' ? <ProcessingPage profile={profile} /> :
-    selected === 'destination' ? <DestinationPage /> :
+    selected === 'destination' ? <DestinationPage destinationProfile={destinationProfile} /> :
     selected === 'live' ? <LivePage status={status} onStart={actions.start} onStop={actions.stop} onRecover={actions.recover} onSafeIdle={actions.safeIdle} /> :
     selected === 'artifacts' ? <ArtifactsPage items={artifacts} /> :
     selected === 'profile' ? <ProfilePage profile={profile} /> :

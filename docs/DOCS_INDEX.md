@@ -48,6 +48,7 @@ For humans:
 | `docs/capture_pipeline.md` | Capture path history and technical details. |
 | `docs/dual_transport_strategy.md` | Native USB and WCH UART roles for safe recovery and high-FPS development. |
 | `docs/firmware_recovery_workflow.md` | Repeatable build, flash, recovery, and serial-port ownership workflow. |
+| `docs/destination_spi_lcd_lab.md` | Draft destination research contract for SPI LCD/IPS modules. |
 | `docs/artifacts/manifest_format.md` | Future common capture manifest. |
 | `docs/project_maintenance.md` | Cleanup and modularization plan. |
 

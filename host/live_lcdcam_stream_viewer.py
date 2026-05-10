@@ -942,6 +942,7 @@ def make_handler(
     interval_ms: int,
     continuous_capture: bool,
     profile: dict[str, Any],
+    destination_profile: dict[str, Any],
 ) -> type[BaseHTTPRequestHandler]:
     dist_dir = frontend_dist_dir()
     allowed_probe_commands = {
@@ -1029,6 +1030,9 @@ def make_handler(
                 return
             if path == "/api/profile":
                 self.send_body(200, "application/json", json.dumps(profile).encode("utf-8"))
+                return
+            if path == "/api/destination-profile":
+                self.send_body(200, "application/json", json.dumps(destination_profile).encode("utf-8"))
                 return
             if path == "/api/artifacts/recent":
                 self.send_body(200, "application/json", json.dumps({
@@ -1258,6 +1262,7 @@ def make_handler(
 def run(args: argparse.Namespace) -> int:
     port = args.port or autodetect_port()
     profile = load_profile(args.profile)
+    destination_profile = load_profile(args.destination_profile)
     bytes_per_sample = 2 if args.data_mode in {"RGB664", "RGB565"} else 1
     crop_len = args.crop_width * args.crop_height * bytes_per_sample if args.host_crop else 0
     firmware_emit_len = args.firmware_emit_len
@@ -1296,7 +1301,7 @@ def run(args: argparse.Namespace) -> int:
                             args.capture_timeout_ms)
     server = ThreadingHTTPServer(
         (args.listen_host, args.listen_port),
-        make_handler(state, args.interval_ms, args.continuous_capture, profile),
+        make_handler(state, args.interval_ms, args.continuous_capture, profile, destination_profile),
     )
 
     def stop(_signum: int, _frame: Any) -> None:
@@ -1323,6 +1328,8 @@ def run(args: argparse.Namespace) -> int:
         "crop_len": crop_len,
         "profile": args.profile,
         "profile_id": profile.get("profile_id"),
+        "destination_profile": args.destination_profile,
+        "destination_profile_id": destination_profile.get("profile_id"),
     }, sort_keys=True), flush=True)
     try:
         server.serve_forever()
@@ -1360,6 +1367,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--listen-host", default="127.0.0.1")
     parser.add_argument("--listen-port", type=int, default=8772)
     parser.add_argument("--profile", default="profiles/gbc_lcd.json")
+    parser.add_argument("--destination-profile", default="profiles/spi_lcd_destination.json")
     return parser
 
 
