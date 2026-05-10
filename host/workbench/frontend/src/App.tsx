@@ -258,9 +258,10 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   const streamWidth = 161;
   const bytesPerPixel = dataMode === 'RGB666' ? 3 : 2;
 
-  const displayScale = options.pixelGap > 0 ? 6 : 1;
-  const gapPixels = options.pixelGap > 0
-    ? Math.max(1, Math.min(displayScale - 1, Math.round((options.pixelGap / 100) * displayScale)))
+  const pixelGap = options.mode === 'gbc' ? options.pixelGap : 0;
+  const displayScale = pixelGap > 0 ? 6 : 1;
+  const gapPixels = pixelGap > 0
+    ? Math.max(1, Math.min(displayScale - 1, Math.round((pixelGap / 100) * displayScale)))
     : 0;
   const sourcePixelSize = displayScale - gapPixels;
   const renderWidth = visibleWidth * displayScale;
@@ -276,8 +277,8 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
 
   const image = ctx.createImageData(renderWidth, renderHeight);
   const gapColor = options.mode === 'gbc'
-    ? [79, 91, 62]
-    : [39, 45, 40];
+    ? [116, 127, 88]
+    : [0, 0, 0];
   for (let offset = 0; offset < image.data.length; offset += 4) {
     image.data[offset] = gapColor[0];
     image.data[offset + 1] = gapColor[1];
@@ -343,7 +344,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
     tint: 26,
     contrast: 92,
     persistence: 0,
-    pixelGap: 10,
+    pixelGap: 4,
     lens: false,
     lensOpacity: 88
   });
@@ -453,7 +454,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
               <Slider min={0} max={40} value={visualOptions.persistence} onChange={(persistence) => setVisualOptions((current) => ({ ...current, persistence }))} />
             </div>
             <div>
-              <Text type="secondary">Pixel gaps</Text>
+              <Text type="secondary">Glass pixel gaps</Text>
               <Slider min={0} max={30} value={visualOptions.pixelGap} onChange={(pixelGap) => setVisualOptions((current) => ({ ...current, pixelGap }))} />
             </div>
             <Segmented
