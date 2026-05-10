@@ -60,6 +60,16 @@ const destinationGpioOptions = Array.from({ length: 55 }, (_, gpio) => ({
   label: `GPIO${gpio}`
 }));
 
+function sourceGpioOwnersFromPins(pins: PinRow[]) {
+  const owners = new Map<number, string>();
+  for (const pin of pins) {
+    if (typeof pin.gpio === 'number') {
+      owners.set(pin.gpio, pin.signal);
+    }
+  }
+  return owners;
+}
+
 const navItems = [
   { key: 'project', icon: <ApartmentOutlined />, label: 'Project' },
   { key: 'source', icon: <ExperimentOutlined />, label: 'Source' },
@@ -191,13 +201,29 @@ function ProcessingPage({ profile }: { profile: TargetProfile | null }) {
   );
 }
 
-function DestinationPage({ destinationProfile }: { destinationProfile: DestinationProfile | null }) {
+function DestinationPage({ destinationProfile, sourcePins }: { destinationProfile: DestinationProfile | null; sourcePins: PinRow[] }) {
   const destination = destinationProfile?.destination || {};
   const spi = destination.spi || {};
   const orientation = destination.orientation || {};
   const color = destination.color || {};
   const unknowns = destinationProfile?.unknowns || [];
   const [pinRows, setPinRows] = useState<DestinationPinDraft[]>([]);
+  const sourceGpioOwners = useMemo(() => sourceGpioOwnersFromPins(sourcePins), [sourcePins]);
+  const destinationGpioOptionsForSelect = useMemo(() => destinationGpioOptions.map((option) => {
+    const owner = sourceGpioOwners.get(option.value);
+    return {
+      ...option,
+      disabled: owner !== undefined,
+      label: owner ? `${option.label} - source ${owner}` : option.label
+    };
+  }), [sourceGpioOwners]);
+  const destinationDuplicateGpios = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const row of pinRows) {
+      if (row.gpio !== null) counts.set(row.gpio, (counts.get(row.gpio) || 0) + 1);
+    }
+    return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([gpio]) => gpio));
+  }, [pinRows]);
 
   useEffect(() => {
     const pins = destinationProfile?.connector?.pins || [];
@@ -211,6 +237,9 @@ function DestinationPage({ destinationProfile }: { destinationProfile: Destinati
   }, [destinationProfile]);
 
   const updatePinGpio = (key: string, gpio: number | null) => {
+    if (gpio !== null && sourceGpioOwners.has(gpio)) {
+      return;
+    }
     setPinRows((current) => current.map((row) => row.key === key ? { ...row, gpio } : row));
   };
 
@@ -297,7 +326,7 @@ function DestinationPage({ destinationProfile }: { destinationProfile: Destinati
             showIcon
             className="inlineAlert"
             message="Editable draft only"
-            description="Changing GPIOs here does not write the profile file, flash firmware, or drive pins. It is for planning the destination module safely."
+            description="Changing GPIOs here does not write the profile file, flash firmware, or drive pins. GPIOs already owned by the active source profile are disabled."
           />
           <Table
             size="small"
@@ -359,11 +388,21 @@ function DestinationPage({ destinationProfile }: { destinationProfile: Destinati
                     placeholder="TBD"
                     disabled={row.role === 'power' || row.role === 'ground' || row.role === 'backlight_power'}
                     className="gpioInput"
-                    options={destinationGpioOptions}
+                    options={destinationGpioOptionsForSelect}
                     optionFilterProp="label"
                     onChange={(nextValue) => updatePinGpio(row.key, typeof nextValue === 'number' ? nextValue : null)}
                   />
                 )
+              },
+              {
+                title: 'Status',
+                render: (_value: unknown, row: DestinationPinDraft) => {
+                  if (row.gpio === null) return <Tag>TBD</Tag>;
+                  const sourceOwner = sourceGpioOwners.get(row.gpio);
+                  if (sourceOwner) return <Tag color="red">source: {sourceOwner}</Tag>;
+                  if (destinationDuplicateGpios.has(row.gpio)) return <Tag color="orange">duplicate</Tag>;
+                  return <Tag color="green">free</Tag>;
+                }
               },
               { title: 'Notes', dataIndex: 'notes' }
             ]}
@@ -1027,7 +1066,7 @@ export default function App() {
   const page = selected === 'project' ? <ProjectPage profile={profile} status={status} /> :
     selected === 'source' ? <SourcePage profile={profile} pins={pins} /> :
     selected === 'processing' ? <ProcessingPage profile={profile} /> :
-    selected === 'destination' ? <DestinationPage destinationProfile={destinationProfile} /> :
+    selected === 'destination' ? <DestinationPage destinationProfile={destinationProfile} sourcePins={pins} /> :
     selected === 'live' ? <LivePage status={status} onStart={actions.start} onStop={actions.stop} onRecover={actions.recover} onSafeIdle={actions.safeIdle} /> :
     selected === 'artifacts' ? <ArtifactsPage items={artifacts} /> :
     selected === 'profile' ? <ProfilePage profile={profile} /> :
