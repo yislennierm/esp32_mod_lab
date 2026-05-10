@@ -67,7 +67,7 @@ body,
   place-items: center;
   min-height: calc(100vh - 150px);
   padding: 12px;
-  overflow: auto;
+  overflow: hidden;
   background: #050607;
 }
 
@@ -75,19 +75,20 @@ body,
   position: relative;
   display: grid;
   place-items: center;
-  width: auto;
-  max-width: none;
+  width: min(calc(100% / 1.3699), calc((100vh - 190px) * 1.1111 / 1.1925));
+  max-width: 960px;
+  min-width: 320px;
+  aspect-ratio: 160 / 144;
 }
 
 .nativeLiveFrame.withoutLens {
-  width: auto;
-  max-width: none;
+  width: min(100%, calc((100vh - 190px) * 1.1111));
 }
 
 .nativeLiveCanvas {
   display: block;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
   aspect-ratio: 160 / 144;
   image-rendering: pixelated;
   object-fit: contain;
