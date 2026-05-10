@@ -241,14 +241,25 @@ uniform sampler2D uTexture;
 
 void main(void)
 {
-    vec4 color = texture(uTexture, vTextureCoord);
-    vec2 sourcePixel = fract(vTextureCoord * vec2(160.0, 144.0));
-    vec2 centered = abs(sourcePixel - 0.5) * 2.0;
-    float edge = smoothstep(0.78, 1.0, max(centered.x, centered.y));
-    float softCell = 1.0 - edge * 0.22;
-    vec3 glassTone = vec3(0.47, 0.53, 0.36);
-    vec3 shaded = mix(glassTone, color.rgb, softCell);
-    finalColor = vec4(shaded, color.a);
+    vec4 texColor = texture(uTexture, vTextureCoord);
+    float pb = 0.4;
+    vec4 lcdColor = vec4(pb, pb, pb, 1.0);
+
+    int px = int(mod(gl_FragCoord.x, 3.0));
+    if (px == 1) {
+        lcdColor.r = 1.0;
+    } else if (px == 2) {
+        lcdColor.g = 1.0;
+    } else {
+        lcdColor.b = 1.0;
+    }
+
+    float scanline = 0.25;
+    if (int(mod(gl_FragCoord.y, 3.0)) == 0) {
+        lcdColor.rgb = vec3(scanline, scanline, scanline);
+    }
+
+    finalColor = texColor * lcdColor;
 }`;
 
 function drawMessage(canvas: HTMLCanvasElement, message: string) {
@@ -312,12 +323,8 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   const streamWidth = 161;
   const bytesPerPixel = dataMode === 'RGB666' ? 3 : 2;
 
-  const pixelGap = options.mode === 'gbc' && !options.lens ? options.pixelGap : 0;
-  const displayScale = pixelGap > 0 ? 6 : 1;
-  const gapPixels = pixelGap > 0
-    ? Math.max(1, Math.min(displayScale - 1, Math.round((pixelGap / 100) * displayScale)))
-    : 0;
-  const sourcePixelSize = displayScale - gapPixels;
+  const displayScale = 1;
+  const sourcePixelSize = 1;
   const renderWidth = visibleWidth * displayScale;
   const renderHeight = visibleHeight * displayScale;
   const previous = options.persistence > 0 && canvas.width === renderWidth && canvas.height === renderHeight
@@ -536,7 +543,7 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
     <div className="liveGrid">
       <Card className="liveCard" title="Live Monitor" extra={<Badge status={statusColor(status)} text={status?.source_state || 'unknown'} />}>
         <div className="nativeLiveSurface">
-          <div className={`nativeLiveFrame ${visualOptions.lens ? 'withLens' : 'withoutLens'} ${visualOptions.mode === 'gbc' && !visualOptions.lens && visualOptions.pixelGap > 0 ? 'pixelGapRender' : ''}`}>
+          <div className={`nativeLiveFrame ${visualOptions.lens ? 'withLens' : 'withoutLens'}`}>
             {visualOptions.lens ? (
               <img
                 className="gbcLensSizer"
@@ -603,8 +610,14 @@ function LivePage({ status, onStart, onStop, onRecover, onSafeIdle }: {
               <Slider min={0} max={40} value={visualOptions.persistence} onChange={(persistence) => setVisualOptions((current) => ({ ...current, persistence }))} />
             </div>
             <div>
-              <Text type="secondary">Glass cell shading</Text>
-              <Slider min={0} max={18} value={visualOptions.pixelGap} onChange={(pixelGap) => setVisualOptions((current) => ({ ...current, pixelGap }))} />
+              <Text type="secondary">LCD RGB shader</Text>
+              <Slider
+                min={0}
+                max={1}
+                marks={{ 0: 'Off', 1: 'On' }}
+                value={visualOptions.pixelGap > 0 ? 1 : 0}
+                onChange={(pixelGap) => setVisualOptions((current) => ({ ...current, pixelGap }))}
+              />
             </div>
             <Segmented
               block
