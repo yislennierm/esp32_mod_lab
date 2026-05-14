@@ -12,6 +12,7 @@ import {
   Layout,
   List,
   Menu,
+  Modal,
   Segmented,
   Select,
   Slider,
@@ -23,13 +24,17 @@ import {
   Tabs,
   Tag,
   Tooltip,
-  Typography
+  Typography,
+  Progress,
+  Popconfirm,
+  AlertProps
 } from 'antd';
 import {
   ApartmentOutlined,
   ApiOutlined,
   ArrowDownOutlined,
   ArrowUpOutlined,
+  ClusterOutlined,
   BugOutlined,
   CheckCircleOutlined,
   DatabaseOutlined,
@@ -38,15 +43,22 @@ import {
   ExperimentOutlined,
   FileSearchOutlined,
   FilterOutlined,
+  HddOutlined,
+  HistoryOutlined,
+  InfoCircleOutlined,
   PlayCircleOutlined,
   PlusOutlined,
   ProfileOutlined,
   ReloadOutlined,
   RocketOutlined,
   SaveOutlined,
+  SafetyCertificateOutlined,
   ThunderboltOutlined,
+  WarningOutlined,
   GithubOutlined,
-  LinkOutlined
+  LinkOutlined,
+  CheckSquareOutlined,
+  LoadingOutlined
 } from '@ant-design/icons';
 import {
   Background,
@@ -76,6 +88,9 @@ import {
   TargetProfile,
   WorkbenchStatus
 } from './api';
+import { runBrowserFlashSession, type BrowserFlashPhase } from './browserFlash';
+import { graphLibraryEntries, resolveGraphBlockSpec, type BlockFieldSpec, type GraphLibraryEntry } from './graphBlockSpecs';
+import { usePersistentState } from './usePersistentState';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -105,6 +120,53 @@ type DestinationSettingsDraft = {
   color_order: string;
 };
 
+type OperationEntry = {
+  id: string;
+  kind: 'save' | 'validate' | 'build' | 'flash' | 'system';
+  level: AlertProps['type'];
+  title: string;
+  detail: string;
+  timestamp: string;
+  projectId?: string;
+  buildProfile?: string;
+};
+
+type OperationState = {
+  active: boolean;
+  kind: OperationEntry['kind'];
+  level: AlertProps['type'];
+  title: string;
+  detail: string;
+  progress?: number;
+  phase?: string;
+  nextStep?: string;
+};
+
+type ResourceCardStatus = 'idle' | 'reserved' | 'active' | 'warning' | 'error';
+
+type ResourceCardData = {
+  key: string;
+  block: string;
+  region: string;
+  status: ResourceCardStatus;
+  owner: string;
+  mode: string;
+  health: string;
+  risk: string;
+  facts: string[];
+};
+
+type GraphLaneId = 'intent' | 'io' | 'sdk' | 'resource' | 'observe';
+
+type GraphLane = {
+  id: GraphLaneId;
+  label: string;
+  color: string;
+  x: number;
+};
+
+type GraphLibraryRoot = 'intent' | 'sdf' | 'sdk' | 'resource' | 'external';
+
 const destinationOutputRoles = new Set([
   'spi_chip_select',
   'panel_reset',
@@ -117,6 +179,26 @@ const destinationGpioOptions = Array.from({ length: 55 }, (_, gpio) => ({
   value: gpio,
   label: `GPIO${gpio}`
 }));
+
+const graphLanes: GraphLane[] = [
+  { id: 'intent', label: 'Intent', color: 'gold', x: 40 },
+  { id: 'io', label: 'I/O And Targets', color: 'green', x: 280 },
+  { id: 'sdk', label: 'SDK And Runtime', color: 'blue', x: 560 },
+  { id: 'resource', label: 'ESP32-P4 Blocks', color: 'purple', x: 860 },
+  { id: 'observe', label: 'Telemetry', color: 'cyan', x: 1160 }
+];
+
+function graphLaneForNode(node: Record<string, unknown>, type: string): GraphLaneId {
+  if (type === 'system_intent') return 'intent';
+  if (type === 'lab_function_block') return 'sdk';
+  if (type === 'esp32p4_resource') return 'resource';
+  if (type === 'external_device') return 'io';
+  if (type.includes('source') || type.includes('destination')) return 'io';
+  const params = node.params && typeof node.params === 'object' ? node.params as Record<string, unknown> : {};
+  if (params.api_group) return 'sdk';
+  if (String(node.label || '').toLowerCase().includes('telemetry')) return 'observe';
+  return 'sdk';
+}
 
 function sourceGpioOwnersFromPins(pins: PinRow[]) {
   const owners = new Map<number, string>();
@@ -132,7 +214,6 @@ const navItems = [
   { key: 'dashboard', icon: <DatabaseOutlined />, label: 'Dashboard' },
   { key: 'project', icon: <ApartmentOutlined />, label: 'Projects' },
   { key: 'graph', icon: <ApiOutlined />, label: 'Graph' },
-  { key: 'sdk', icon: <GithubOutlined />, label: 'SDK' },
   { key: 'source', icon: <ExperimentOutlined />, label: 'Signals' },
   { key: 'processing', icon: <ApiOutlined />, label: 'Runtime' },
   { key: 'destination', icon: <DesktopOutlined />, label: 'I/O' },
@@ -164,6 +245,97 @@ function MetricStrip({ items }: { items: Array<{ label: string; value: ReactNode
         </div>
       ))}
     </div>
+  );
+}
+
+function formatShortcut(label: string) {
+  return <kbd className="shortcutKey">{label}</kbd>;
+}
+
+function OperationCenter({
+  status,
+  selectedProject,
+  selectedBuildProfile,
+  operation,
+  history
+}: {
+  status: WorkbenchStatus | null;
+  selectedProject: LabProject | null;
+  selectedBuildProfile: string;
+  operation: OperationState | null;
+  history: OperationEntry[];
+}) {
+  const latest = history[0] || null;
+  const tone = operation?.level || latest?.level || 'info';
+  const progress = operation?.progress ?? (operation?.active ? 12 : 100);
+
+  return (
+    <Card size="small" className="operationCenterCard">
+      <div className="operationCenterLayout">
+        <div className="operationCenterLead">
+          <Space size={8} wrap>
+            <Tag color={status?.device_connected ? 'green' : 'orange'} icon={<ThunderboltOutlined />}>
+              {status?.device_connected ? 'device online' : 'offline mode'}
+            </Tag>
+            <Tag color="blue" icon={<ApartmentOutlined />}>
+              {selectedProject?.name || 'no project'}
+            </Tag>
+            <Tag icon={<RocketOutlined />}>{selectedBuildProfile}</Tag>
+            <Tag icon={<ApiOutlined />} color={status?.serial_owner === 'browser_flash' ? 'gold' : 'default'}>
+              {status?.serial_owner || 'backend'}
+            </Tag>
+          </Space>
+          <Alert
+            type={tone}
+            showIcon
+            message={operation?.title || latest?.title || 'Workbench ready'}
+            description={operation?.detail || latest?.detail || 'Select a project, validate intent, then build or flash with the current profile.'}
+          />
+          {operation ? (
+            <div className="operationProgressRow">
+              <Progress percent={Math.max(0, Math.min(100, progress))} size="small" status={operation.level === 'error' ? 'exception' : operation.active ? 'active' : 'success'} />
+              <Text type="secondary">{operation.phase || (operation.active ? 'running' : 'ready')}</Text>
+              {operation.nextStep ? <Text type="secondary">Next: {operation.nextStep}</Text> : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="operationCenterAside">
+          <div className="shortcutPanel">
+            <Text type="secondary">Shortcuts</Text>
+            <Space wrap size={[6, 6]}>
+              <Tag>{formatShortcut('Ctrl/Cmd+S')} save</Tag>
+              <Tag>{formatShortcut('Ctrl/Cmd+B')} build</Tag>
+              <Tag>{formatShortcut('Ctrl/Cmd+Shift+V')} validate</Tag>
+              <Tag>{formatShortcut('Ctrl/Cmd+Shift+F')} flash</Tag>
+            </Space>
+          </div>
+          <div className="historyPanel">
+            <Space size={6}>
+              <HistoryOutlined />
+              <Text type="secondary">Recent operations</Text>
+            </Space>
+            {history.length === 0 ? (
+              <Text type="secondary">No operations yet</Text>
+            ) : (
+              <div className="historyList">
+                {history.slice(0, 4).map((entry) => (
+                  <div className="historyItem" key={entry.id}>
+                    <Tag color={entry.level === 'error' ? 'red' : entry.level === 'warning' ? 'gold' : 'blue'}>
+                      {entry.kind}
+                    </Tag>
+                    <div className="historyCopy">
+                      <Text strong>{entry.title}</Text>
+                      <Text type="secondary">{entry.detail}</Text>
+                    </div>
+                    <Text type="secondary">{entry.timestamp}</Text>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -203,13 +375,124 @@ function projectBlockRows(project: LabProject | null, registry: LabBlock[] = [])
 }
 
 function HeaderStatus({ selectedProject, status }: { selectedProject: LabProject | null; status: WorkbenchStatus | null }) {
+  const liveActive = Boolean(status?.running);
   return (
-    <Space size="middle" wrap>
+    <Space size="middle" wrap className="headerStatusRow">
       <Text strong>ESP32-P4 Signal Lab</Text>
-      <Tag color="blue">{selectedProject?.name || 'no project'}</Tag>
-      <Tag color={status?.device_connected ? 'green' : 'orange'}>{status?.device_connected ? 'device online' : 'offline mode'}</Tag>
-      <Badge status={statusColor(status)} text={status?.running ? 'lab stream active' : 'lab idle'} />
+      <Tooltip title={status?.device_connected ? 'Device online and reachable by the workbench.' : 'No active device connection. The workbench is in offline mode.'}>
+        <Tag className="headerIconTag" color={status?.device_connected ? 'green' : 'orange'} icon={<ThunderboltOutlined />} aria-label={status?.device_connected ? 'device online' : 'offline mode'} />
+      </Tooltip>
+      <Tooltip title={liveActive ? 'Live lab stream is active.' : 'Live lab stream is idle.'}>
+        <Tag
+          className="headerIconTag"
+          color={liveActive ? 'success' : 'default'}
+          icon={<PlayCircleOutlined />}
+          aria-label={liveActive ? 'lab stream active' : 'lab idle'}
+        />
+      </Tooltip>
     </Space>
+  );
+}
+
+function GlobalProjectBar({
+  projects,
+  selectedProject,
+  selectedProjectId,
+  onSelectProject,
+  selectedBuildProfile,
+  onSelectBuildProfile,
+  onSave,
+  onValidate,
+  onBuild,
+  onFlash,
+  onOpenHistory,
+  busy,
+  browserSerialSupported,
+  operation,
+  latestHistory
+}: {
+  projects: LabProject[];
+  selectedProject: LabProject | null;
+  selectedProjectId: string;
+  onSelectProject: (projectId: string) => void;
+  selectedBuildProfile: string;
+  onSelectBuildProfile: (profile: string) => void;
+  onSave: () => void;
+  onValidate: () => void;
+  onBuild: () => void;
+  onFlash: () => void;
+  onOpenHistory: () => void;
+  busy: string | null;
+  browserSerialSupported: boolean;
+  operation: OperationState | null;
+  latestHistory: OperationEntry | null;
+}) {
+  const projectOptions = projects.map((project) => ({
+    value: project.id,
+    label: project.status === 'draft_local_only' ? `${project.name} (local)` : project.name
+  }));
+  const buildProfiles = Object.entries(selectedProject?.build_profiles || {});
+  const profileOptions = buildProfiles.map(([id, entry]) => ({
+    value: id,
+    label: (
+      <Space size={4}>
+        {id === 'lab' ? <ExperimentOutlined /> : id === 'telemetry' ? <ApiOutlined /> : <RocketOutlined />}
+        <span>{id === 'telemetry' ? 'Telem' : entry?.name || id}</span>
+      </Space>
+    )
+  }));
+  const summaryTitle = operation?.title || latestHistory?.title || 'Ready';
+  const summaryDetail = operation?.detail || latestHistory?.detail || 'Select a project, then validate, build, or flash.';
+  const summaryColor =
+    operation?.level === 'error' || latestHistory?.level === 'error'
+      ? 'error'
+      : operation?.level === 'warning' || latestHistory?.level === 'warning'
+        ? 'warning'
+        : operation?.level === 'success' || latestHistory?.level === 'success'
+          ? 'success'
+          : 'default';
+
+  return (
+    <div className="globalProjectBar">
+      <Select
+        className="globalProjectSelect"
+        size="small"
+        value={selectedProjectId || undefined}
+        options={projectOptions}
+        onChange={onSelectProject}
+      />
+      <Segmented
+        size="small"
+        value={selectedBuildProfile}
+        options={profileOptions}
+        onChange={(value) => onSelectBuildProfile(String(value))}
+      />
+      <Space size={4} wrap>
+        <Tooltip title="Save project">
+          <Button size="small" icon={<SaveOutlined />} disabled={!selectedProject} loading={busy === 'save'} onClick={onSave} />
+        </Tooltip>
+        <Tooltip title="Validate project intent and pin conflicts">
+          <Button size="small" icon={<CheckSquareOutlined />} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} loading={busy === 'validate'} onClick={onValidate} />
+        </Tooltip>
+        <Tooltip title="Build selected profile">
+          <Button size="small" icon={<BugOutlined />} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} loading={busy === 'build'} onClick={onBuild} />
+        </Tooltip>
+        <Tooltip title="Flash selected profile in browser">
+          <Button size="small" type="primary" icon={<ThunderboltOutlined />} disabled={!selectedProject || selectedProject.status === 'draft_local_only' || !browserSerialSupported} loading={busy === 'flash'} onClick={onFlash} />
+        </Tooltip>
+        <Tooltip title="Operation history">
+          <Button size="small" icon={<HistoryOutlined />} onClick={onOpenHistory} />
+        </Tooltip>
+      </Space>
+      <Tooltip title={`${summaryTitle}. ${summaryDetail}`}>
+        <Tag className="globalOperationSummary" color={summaryColor}>
+          <Space size={6}>
+            {operation?.active ? <LoadingOutlined /> : <InfoCircleOutlined />}
+            <span>{operation?.active ? summaryTitle : latestHistory?.title || 'Ready'}</span>
+          </Space>
+        </Tag>
+      </Tooltip>
+    </div>
   );
 }
 
@@ -261,34 +544,43 @@ function createDraftProject(): LabProject {
 }
 
 function ProjectPage({
-  profile,
   status,
   blocks,
   projects,
   selectedProject,
   selectedProjectId,
+  selectedBuildProfile,
+  onSelectBuildProfile,
   onSelectProject,
   onCreateProject,
   onSaveProject,
   onDuplicateProject,
-  onDeleteProject
+  onDeleteProject,
+  onProjectsChanged,
+  onOpenProject,
+  onActivity,
+  onOperationStateChange
 }: {
-  profile: TargetProfile | null;
   status: WorkbenchStatus | null;
   blocks: LabBlock[];
   projects: LabProject[];
   selectedProject: LabProject | null;
   selectedProjectId: string;
+  selectedBuildProfile: string;
+  onSelectBuildProfile: (profile: string) => void;
   onSelectProject: (projectId: string) => void;
   onCreateProject: () => Promise<void>;
   onSaveProject: (project: LabProject) => Promise<void>;
   onDuplicateProject: (project: LabProject) => Promise<void>;
   onDeleteProject: (project: LabProject) => Promise<void>;
+  onProjectsChanged: (projects: LabProject[], selectedProjectId?: string) => void;
+  onOpenProject: (projectId: string, page?: string) => void;
+  onActivity: (entry: Omit<OperationEntry, 'id' | 'timestamp'>) => void;
+  onOperationStateChange: (operation: OperationState | null) => void;
 }) {
   const [validation, setValidation] = useState<ProjectValidation | null>(null);
   const [projectBusy, setProjectBusy] = useState<string | null>(null);
   const [projectResult, setProjectResult] = useState<Record<string, unknown> | ProjectActionResult | null>(null);
-  const [selectedBuildProfile, setSelectedBuildProfile] = useState<string>('production');
   const [flashManifest, setFlashManifest] = useState<FlashManifest | null>(null);
   const [browserFlashProgress, setBrowserFlashProgress] = useState(0);
   const [browserFlashState, setBrowserFlashState] = useState('idle');
@@ -303,21 +595,6 @@ function ProjectPage({
   const activeBuildProfile = (selectedProject?.build_profiles?.[selectedBuildProfile]
     || selectedProject?.build_profiles?.production
     || (buildProfileEntries.length ? buildProfileEntries[0]?.[1] : null));
-
-  useEffect(() => {
-    if (!selectedProject?.build_profiles) {
-      setSelectedBuildProfile('production');
-      return;
-    }
-    if (!selectedProject.build_profiles[selectedBuildProfile]) {
-      if (selectedProject.build_profiles.production) {
-        setSelectedBuildProfile('production');
-        return;
-      }
-      const firstProfile = Object.keys(selectedProject.build_profiles)[0];
-      if (firstProfile) setSelectedBuildProfile(firstProfile);
-    }
-  }, [selectedProject, selectedBuildProfile]);
 
   useEffect(() => {
     setFlashManifest(null);
@@ -345,10 +622,41 @@ function ProjectPage({
   const validateProject = async () => {
     if (!selectedProject || selectedProject.status === 'draft_local_only') return;
     setProjectBusy('validate');
+    onOperationStateChange({
+      active: true,
+      kind: 'validate',
+      level: 'info',
+      title: `Validating ${selectedProject.name}`,
+      detail: 'Checking graph intent, profiles, and source/destination GPIO conflicts.',
+      phase: 'validation',
+      nextStep: 'Review warnings before building or flashing.'
+    });
     try {
       const result = await api.validateProject(selectedProject.id);
       setValidation(result);
       setProjectResult(null);
+      onActivity({
+        kind: 'validate',
+        level: result.ok ? 'success' : 'warning',
+        title: result.ok ? `Validation passed for ${selectedProject.name}` : `Validation warnings for ${selectedProject.name}`,
+        detail: result.ok
+          ? 'Project is structurally valid for the selected graph and profiles.'
+          : `${result.errors.length} errors, ${result.warnings.length} warnings`,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      onOperationStateChange({
+        active: false,
+        kind: 'validate',
+        level: result.ok ? 'success' : 'warning',
+        title: result.ok ? 'Validation complete' : 'Validation needs review',
+        detail: result.ok
+          ? 'No blocking errors were found.'
+          : 'Open the Validation tab and resolve the blocking items before production flashing.',
+        progress: 100,
+        phase: result.ok ? 'ready' : 'review_required',
+        nextStep: result.ok ? 'Build the selected profile.' : 'Fix listed conflicts and validate again.'
+      });
     } catch (error) {
       setValidation({
         ok: false,
@@ -357,6 +665,25 @@ function ProjectPage({
         warnings: [],
         source_gpios: [],
         destination_gpios: []
+      });
+      const message = error instanceof Error ? error.message : String(error);
+      onActivity({
+        kind: 'validate',
+        level: 'error',
+        title: `Validation failed for ${selectedProject.name}`,
+        detail: message,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      onOperationStateChange({
+        active: false,
+        kind: 'validate',
+        level: 'error',
+        title: 'Validation failed',
+        detail: message,
+        progress: 100,
+        phase: 'error',
+        nextStep: 'Retry validation after fixing the underlying issue.'
       });
     } finally {
       setProjectBusy(null);
@@ -369,6 +696,15 @@ function ProjectPage({
     setBrowserFlashState('preparing');
     setBrowserFlashLogs([]);
     setBrowserFlashProgress(0);
+    onOperationStateChange({
+      active: true,
+      kind: 'flash',
+      level: 'info',
+      title: `Preparing browser flash for ${selectedProject.name}`,
+      detail: 'Loading the signed-off flash manifest and releasing backend serial ownership.',
+      phase: 'preparing',
+      nextStep: 'Choose the board port in Chrome or Edge.'
+    });
     try {
       const manifest = await loadBrowserFlashManifest();
       appendBrowserFlashLog(`Loaded flash manifest for ${manifest.project_id}:${manifest.build_profile}`);
@@ -383,6 +719,24 @@ function ProjectPage({
         manifest,
         ownership
       });
+      onActivity({
+        kind: 'flash',
+        level: 'info',
+        title: `Browser flash prepared for ${selectedProject.name}`,
+        detail: `Backend released ${ownership.port || status?.serial_port || 'serial port'} for browser ownership.`,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      onOperationStateChange({
+        active: false,
+        kind: 'flash',
+        level: 'success',
+        title: 'Browser flash prepared',
+        detail: 'The flash manifest is ready and the backend has released the serial device.',
+        progress: 100,
+        phase: 'prepared',
+        nextStep: 'Click Flash in Browser to write the image.'
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       appendBrowserFlashLog(`Prepare failed: ${message}`);
@@ -393,6 +747,24 @@ function ProjectPage({
         build_profile: selectedBuildProfile,
         error: message
       });
+      onActivity({
+        kind: 'flash',
+        level: 'error',
+        title: `Browser flash prepare failed for ${selectedProject.name}`,
+        detail: message,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      onOperationStateChange({
+        active: false,
+        kind: 'flash',
+        level: 'error',
+        title: 'Browser flash prepare failed',
+        detail: message,
+        progress: 100,
+        phase: 'error',
+        nextStep: 'Resolve the serial or build issue, then try again.'
+      });
     } finally {
       setProjectBusy(null);
     }
@@ -400,6 +772,14 @@ function ProjectPage({
 
   const reconnectAfterBrowserFlash = async () => {
     setProjectBusy('reconnect-browser-flash');
+    onOperationStateChange({
+      active: true,
+      kind: 'flash',
+      level: 'info',
+      title: 'Reconnecting lab backend',
+      detail: 'Restoring backend serial access after browser flashing.',
+      phase: 'reconnecting'
+    });
     try {
       const ownership = await api.reconnectSerial();
       setSerialOwnership(ownership);
@@ -411,6 +791,24 @@ function ProjectPage({
         build_profile: selectedBuildProfile,
         ownership
       });
+      onActivity({
+        kind: 'flash',
+        level: ownership.ok ? 'success' : 'warning',
+        title: ownership.ok ? 'Lab backend reconnected' : 'Lab backend reconnect needs attention',
+        detail: ownership.ok ? 'Interactive lab commands are available again.' : ownership.error || 'Reconnect failed.',
+        projectId: selectedProject?.id,
+        buildProfile: selectedBuildProfile
+      });
+      onOperationStateChange({
+        active: false,
+        kind: 'flash',
+        level: ownership.ok ? 'success' : 'warning',
+        title: ownership.ok ? 'Reconnect complete' : 'Reconnect needs attention',
+        detail: ownership.ok ? 'The workbench owns the serial device again.' : ownership.error || 'Reconnect failed.',
+        progress: 100,
+        phase: ownership.ok ? 'ready' : 'review_required',
+        nextStep: ownership.ok ? 'Resume monitoring or graph work.' : 'Reconnect manually or reflash lab firmware.'
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       appendBrowserFlashLog(`Reconnect failed: ${message}`);
@@ -420,6 +818,24 @@ function ProjectPage({
         action: 'browser_flash_reconnect',
         build_profile: selectedBuildProfile,
         error: message
+      });
+      onActivity({
+        kind: 'flash',
+        level: 'error',
+        title: 'Reconnect failed',
+        detail: message,
+        projectId: selectedProject?.id,
+        buildProfile: selectedBuildProfile
+      });
+      onOperationStateChange({
+        active: false,
+        kind: 'flash',
+        level: 'error',
+        title: 'Reconnect failed',
+        detail: message,
+        progress: 100,
+        phase: 'error',
+        nextStep: 'Try Reconnect Lab again or inspect the serial path.'
       });
     } finally {
       setProjectBusy(null);
@@ -443,99 +859,84 @@ function ProjectPage({
     setBrowserFlashState('flashing');
     try {
       const manifest = flashManifest || await loadBrowserFlashManifest();
-      if (serialOwnership?.serial_owner !== 'browser_flash') {
-        const ownership = await api.releaseSerial();
-        setSerialOwnership(ownership);
-      }
-      appendBrowserFlashLog(`Requesting browser serial port for ${manifest.chip}`);
-      const serialApi = (navigator as Navigator & {
-        serial?: {
-          requestPort: (options?: unknown) => Promise<unknown>;
-        };
-      }).serial;
-      if (!serialApi) {
-        throw new Error('web_serial_not_supported');
-      }
-      const port = await serialApi.requestPort();
-      const esptool = await import('esptool-js');
-      const terminal = {
-        clean() {
-          setBrowserFlashLogs([]);
-        },
-        writeLine(data: string) {
-          appendBrowserFlashLog(data);
-        },
-        write(data: string) {
-          if (data.trim()) appendBrowserFlashLog(data);
-        }
+      const phaseDescriptions: Record<BrowserFlashPhase, string> = {
+        idle: 'idle',
+        preparing: 'Preparing manifest and serial ownership',
+        awaiting_port: 'Waiting for browser port selection',
+        connecting: 'Connecting to the bootloader',
+        downloading: 'Downloading build artifacts',
+        writing: 'Writing flash images',
+        resetting: 'Resetting the board',
+        reconnecting: 'Reconnecting backend control',
+        complete: 'Flash completed',
+        error: 'Flash failed'
       };
-      const transport = new esptool.Transport(port, true);
-      const loader = new esptool.ESPLoader({
-        transport,
-        baudrate: 115200,
-        terminal,
-        debugLogging: false,
-        resetConstructors: {
-          usbJTAGSerialReset: (transportInstance: unknown) => new esptool.UsbJtagSerialReset(transportInstance as never)
+      const session = await runBrowserFlashSession({
+        manifest,
+        buildProfile: selectedBuildProfile,
+        releaseSerial: async () => {
+          const ownership = serialOwnership?.serial_owner === 'browser_flash' ? serialOwnership : await api.releaseSerial();
+          setSerialOwnership(ownership);
+          return ownership;
+        },
+        reconnectSerial: async () => {
+          const reconnect = await api.reconnectSerial();
+          setSerialOwnership(reconnect);
+          return reconnect;
+        },
+        onLog: appendBrowserFlashLog,
+        onProgress: setBrowserFlashProgress,
+        onPhase: (phase, detail) => {
+          setBrowserFlashState(phase);
+          onOperationStateChange({
+            active: !['complete', 'error'].includes(phase),
+            kind: 'flash',
+            level: phase === 'error' ? 'error' : phase === 'complete' ? 'success' : 'info',
+            title: `Flashing ${selectedProject.name} (${selectedBuildProfile})`,
+            detail: detail || phaseDescriptions[phase],
+            progress: phase === 'complete' ? 100 : undefined,
+            phase,
+            nextStep: phase === 'awaiting_port' ? 'Approve the browser serial prompt.' : phase === 'complete' ? 'Return to Monitor or Graph.' : undefined
+          });
         }
       });
-      const chipName = await loader.main(manifest.before as never);
-      appendBrowserFlashLog(`Connected to ${chipName}`);
-      const totalBytes = manifest.images.reduce((sum, image) => sum + image.size, 0);
-      const imageData = await Promise.all(manifest.images.map(async (image) => {
-        const response = await fetch(image.url, { cache: 'no-store' });
-        if (!response.ok) {
-          throw new Error(`artifact_fetch_failed:${image.relative_path}`);
-        }
-        return {
-          address: image.address,
-          size: image.size,
-          data: new Uint8Array(await response.arrayBuffer())
-        };
-      }));
-      let committedBase = 0;
-      await loader.writeFlash({
-        fileArray: imageData.map((image) => ({ data: image.data, address: image.address })),
-        flashMode: manifest.flash_mode as never,
-        flashFreq: manifest.flash_freq as never,
-        flashSize: manifest.flash_size as never,
-        eraseAll: false,
-        compress: true,
-        reportProgress: (fileIndex: number, written: number, total: number) => {
-          const currentSize = imageData[fileIndex]?.size || total || 0;
-          const normalizedWritten = total > 0 ? Math.min(currentSize, Math.round((written / total) * currentSize)) : written;
-          const overallWritten = Math.min(totalBytes, committedBase + normalizedWritten);
-          setBrowserFlashProgress(totalBytes > 0 ? Math.round((overallWritten / totalBytes) * 100) : 0);
-          if (written >= total) {
-            committedBase += currentSize;
-          }
-        }
-      });
-      setBrowserFlashProgress(100);
-      appendBrowserFlashLog('Flash write completed');
-      await loader.after(manifest.after as never);
-      await transport.disconnect();
       appendBrowserFlashLog('Device reset complete');
       setBrowserFlashState('flashed');
-      const result: Record<string, unknown> = {
+      const resultPayload: Record<string, unknown> = {
         ok: true,
         action: 'browser_flash',
         build_profile: selectedBuildProfile,
-        chip: chipName,
+        chip: session.chip,
         manifest
       };
-      if (selectedBuildProfile !== 'production') {
-        const reconnect = await api.reconnectSerial();
-        setSerialOwnership(reconnect);
-        appendBrowserFlashLog(reconnect.ok ? 'Backend serial reconnected for lab monitoring' : `Reconnect failed: ${reconnect.error || 'unknown error'}`);
-        if (reconnect.ok) {
-          setBrowserFlashState('reconnected');
-        }
-        result.reconnect = reconnect;
+      if (selectedBuildProfile !== 'production' && session.reconnect) {
+        appendBrowserFlashLog(session.reconnect.ok ? 'Backend serial reconnected for lab monitoring' : `Reconnect failed: ${session.reconnect.error || 'unknown error'}`);
+        if (session.reconnect.ok) setBrowserFlashState('reconnected');
+        resultPayload.reconnect = session.reconnect;
       } else {
         appendBrowserFlashLog('Production flash leaves the board in product mode until lab firmware is flashed again');
       }
-      setProjectResult(result);
+      setProjectResult(resultPayload);
+      onActivity({
+        kind: 'flash',
+        level: 'success',
+        title: `Flashed ${selectedProject.name}`,
+        detail: `${selectedBuildProfile} image written via browser flow.`,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      onOperationStateChange({
+        active: false,
+        kind: 'flash',
+        level: 'success',
+        title: 'Flash complete',
+        detail: selectedBuildProfile === 'production'
+          ? 'Production firmware is now active on the board.'
+          : 'Board flashed and backend control restored.',
+        progress: 100,
+        phase: 'complete',
+        nextStep: selectedBuildProfile === 'production' ? 'Reflash lab firmware before using live monitor again.' : 'Open Monitor or continue graph work.'
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       appendBrowserFlashLog(`Browser flash failed: ${message}`);
@@ -546,6 +947,24 @@ function ProjectPage({
         build_profile: selectedBuildProfile,
         error: message
       });
+      onActivity({
+        kind: 'flash',
+        level: 'error',
+        title: `Flash failed for ${selectedProject.name}`,
+        detail: message,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      onOperationStateChange({
+        active: false,
+        kind: 'flash',
+        level: 'error',
+        title: 'Flash failed',
+        detail: message,
+        progress: 100,
+        phase: 'error',
+        nextStep: 'Inspect Browser Flash logs and retry after resolving the cause.'
+      });
     } finally {
       setProjectBusy(null);
     }
@@ -554,18 +973,67 @@ function ProjectPage({
   const runProjectAction = async (action: 'build' | 'flash') => {
     if (!selectedProject || selectedProject.status === 'draft_local_only') return;
     setProjectBusy(action);
+    onOperationStateChange({
+      active: true,
+      kind: action,
+      level: 'info',
+      title: `${action === 'build' ? 'Building' : 'Flashing'} ${selectedProject.name}`,
+      detail: `${action === 'build' ? 'Executing build script' : 'Running direct flash script'} for ${selectedBuildProfile}.`,
+      phase: action
+    });
     try {
       const result = action === 'build'
         ? await api.buildProject(selectedProject.id, selectedBuildProfile)
         : await api.flashProject(selectedProject.id, selectedBuildProfile);
       setProjectResult(result);
+      onActivity({
+        kind: action,
+        level: result.ok ? 'success' : 'error',
+        title: `${action === 'build' ? 'Build' : 'Flash'} ${result.ok ? 'completed' : 'failed'} for ${selectedProject.name}`,
+        detail: result.ok
+          ? `${selectedBuildProfile} ${action} script finished successfully.`
+          : result.error || `${action} returned a non-zero status.`,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      onOperationStateChange({
+        active: false,
+        kind: action,
+        level: result.ok ? 'success' : 'error',
+        title: result.ok ? `${action === 'build' ? 'Build' : 'Flash'} complete` : `${action === 'build' ? 'Build' : 'Flash'} failed`,
+        detail: result.ok
+          ? `${selectedBuildProfile} ${action} path finished successfully.`
+          : result.error || `${action} returned a non-zero status.`,
+        progress: 100,
+        phase: result.ok ? 'complete' : 'error',
+        nextStep: result.ok ? (action === 'build' ? 'Flash from the browser or inspect build artifacts.' : 'Verify the board state in Monitor.') : 'Inspect the Result tab for command output.'
+      });
     } catch (error) {
-      setProjectResult({
+      const failure = {
         ok: false,
         project_id: selectedProject?.id || '',
         action,
         build_profile: selectedBuildProfile,
         error: error instanceof Error ? error.message : String(error)
+      };
+      setProjectResult(failure);
+      onActivity({
+        kind: action,
+        level: 'error',
+        title: `${action === 'build' ? 'Build' : 'Flash'} failed for ${selectedProject.name}`,
+        detail: failure.error || 'Unknown error',
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      onOperationStateChange({
+        active: false,
+        kind: action,
+        level: 'error',
+        title: `${action === 'build' ? 'Build' : 'Flash'} failed`,
+        detail: failure.error || 'Unknown error',
+        progress: 100,
+        phase: 'error',
+        nextStep: 'Inspect command output, then retry.'
       });
     } finally {
       setProjectBusy(null);
@@ -573,125 +1041,197 @@ function ProjectPage({
   };
 
   const projectOptions = projects.map((project) => ({ value: project.id, label: project.status === 'draft_local_only' ? `${project.name} (local)` : project.name }));
+  const buildProfileSegmented = buildProfileEntries.map(([id, entry]) => ({
+    value: id,
+    label: (
+      <Space size={4}>
+        {id === 'lab' ? <ExperimentOutlined /> : id === 'telemetry' ? <ApiOutlined /> : <RocketOutlined />}
+        <span>{id === 'telemetry' ? 'Telem' : entry?.name || id}</span>
+      </Space>
+    )
+  }));
 
   return (
     <Space direction="vertical" size="small" className="pageStack">
-      <div className="projectGrid">
+      <Card
+        size="small"
+        title={selectedProject?.name || 'Project'}
+        extra={
+          <Space size={4} wrap>
+            <Tag color={selectedProject?.status.includes('validated') ? 'green' : selectedProject?.status === 'draft_local_only' ? 'orange' : 'blue'}>
+              {selectedProject?.status || 'none'}
+            </Tag>
+            {selectedProject?.id ? <Tag>{selectedProject.id}</Tag> : null}
+          </Space>
+        }
+      >
         <Space direction="vertical" size="small" className="fullWidth">
-          <Card
-            size="small"
-            title="Project Composer"
-            extra={<Tag color={selectedProject?.status.includes('validated') ? 'green' : selectedProject?.status === 'draft_local_only' ? 'orange' : 'blue'}>{selectedProject?.status || 'none'}</Tag>}
-          >
-            <Space direction="vertical" size="small" className="fullWidth">
-              <Space.Compact className="fullWidth">
-                <Select className="fullWidth" value={selectedProjectId || undefined} options={projectOptions} onChange={onSelectProject} />
+          <div className="projectToolbarRow">
+            <Space size={6} wrap>
+              <Tooltip title="Create project">
                 <Button icon={<PlusOutlined />} onClick={onCreateProject}>New</Button>
-              </Space.Compact>
-              <MetricStrip items={[
-                { label: 'Open Project', value: selectedProject?.id || 'none' },
-                { label: 'Graph Nodes', value: selectedProject?.graph?.nodes?.length ?? 0 },
-                { label: 'Projects', value: projects.length },
-                { label: 'Device', value: status?.device_connected ? 'online' : 'offline' }
-              ]} />
-              <Descriptions bordered size="small" column={2}>
-                <Descriptions.Item label="Ingress role">{selectedProject?.source?.block || '?'}</Descriptions.Item>
-                <Descriptions.Item label="Transform roles">{selectedProject?.processing?.length ? selectedProject.processing.map((item) => item.block).join(', ') : 'none'}</Descriptions.Item>
-                <Descriptions.Item label="Egress role">{selectedProject?.destination?.block || '?'}</Descriptions.Item>
-                <Descriptions.Item label="Build profile">{activeBuildProfile?.name || selectedBuildProfile}</Descriptions.Item>
-              </Descriptions>
-              <Space wrap>
-                <Select
-                  style={{ minWidth: 150 }}
-                  value={selectedBuildProfile}
-                  options={buildProfileOptions}
-                  onChange={setSelectedBuildProfile}
-                />
-                <Button icon={<CheckCircleOutlined />} loading={projectBusy === 'validate'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={validateProject}>Validate</Button>
-                <Button icon={<BugOutlined />} loading={projectBusy === 'build'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={() => runProjectAction('build')}>Build</Button>
-                <Button type="primary" danger icon={<RocketOutlined />} loading={projectBusy === 'flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={() => runProjectAction('flash')}>{`Flash ${activeBuildProfile?.name || 'Build'}`}</Button>
-                <Button icon={<DisconnectOutlined />} loading={projectBusy === 'prepare-browser-flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={prepareBrowserFlash}>Prepare Browser Flash</Button>
-                <Button type="primary" icon={<ThunderboltOutlined />} loading={projectBusy === 'browser-flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only' || !browserSerialSupported} onClick={runBrowserFlash}>Flash In Browser</Button>
-                <Button icon={<ReloadOutlined />} loading={projectBusy === 'reconnect-browser-flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={reconnectAfterBrowserFlash}>Reconnect Lab</Button>
-                <Button disabled={!selectedProject} onClick={() => selectedProject && onSaveProject(selectedProject)}>Save</Button>
-                <Button disabled={!selectedProject} onClick={() => selectedProject && onDuplicateProject(selectedProject)}>Duplicate</Button>
-                <Button danger disabled={!selectedProject} onClick={() => selectedProject && onDeleteProject(selectedProject)}>Delete</Button>
-              </Space>
-              <Collapse
-                ghost
-                size="small"
-                items={[{
-                  key: 'deploy-notes',
-                  label: 'Deploy notes',
-                  children: (
-                    <Space direction="vertical" className="fullWidth">
-                      <Text type="secondary">Flash releases the workbench serial session first. Production leaves the board in product mode; lab and telemetry keep the interactive command path available for the workbench.</Text>
-                      <MetricStrip items={[
-                        { label: 'Browser Flash', value: browserSerialSupported ? 'supported' : 'Chrome/Edge required' },
-                        { label: 'Serial Owner', value: serialOwnership?.serial_owner || status?.serial_owner || 'unknown' },
-                        { label: 'Flash State', value: browserFlashState },
-                        { label: 'Progress', value: `${browserFlashProgress}%` }
-                      ]} />
-                      {flashManifest ? <JsonBlock value={flashManifest} /> : null}
-                      <JsonBlock value={activeBuildProfile} />
-                    </Space>
-                  )
-                }]}
-              />
+              </Tooltip>
+              <Button disabled={!selectedProject} onClick={() => selectedProject && onDuplicateProject(selectedProject)}>Duplicate</Button>
+              <Popconfirm
+                title="Delete project?"
+                description="This removes the project profile from the lab workspace."
+                okText="Delete"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => selectedProject && onDeleteProject(selectedProject)}
+              >
+                <Button danger disabled={!selectedProject}>Delete</Button>
+              </Popconfirm>
             </Space>
-          </Card>
-        </Space>
-        <Space direction="vertical" size="small" className="fullWidth">
-          <Card size="small" title="Project Detail">
-            <Tabs
-              size="small"
-              items={[
-                {
-                  key: 'blocks',
-                  label: 'Blocks',
-                  children: (
-                    <Table
-                      size="small"
-                      pagination={false}
-                      dataSource={projectBlockRows(selectedProject, blocks)}
-                      columns={[
-                        { title: 'Kind', dataIndex: 'kind', width: 86, render: (kind: string) => <Tag>{kind}</Tag> },
-                        { title: 'Block', dataIndex: 'name' },
-                        { title: 'Origin', dataIndex: 'origin', width: 82, render: (origin: string) => <Tag>{origin}</Tag> },
-                        {
-                          title: 'Status',
-                          dataIndex: 'status',
-                          width: 118,
-                          render: (blockStatus: string) => <Tag color={blockStatus.includes('validated') || blockStatus.includes('working') ? 'green' : 'blue'}>{blockStatus}</Tag>
-                        }
-                      ]}
+            <Space size={6} wrap>
+              <Tooltip title="Validate project">
+                <Button icon={<CheckCircleOutlined />} loading={projectBusy === 'validate'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={validateProject} />
+              </Tooltip>
+              <Text type="secondary">Build and flash stay in the header.</Text>
+            </Space>
+          </div>
+          <div className="projectMetaGrid">
+            <div className="projectMetaPanel">
+              <Text type="secondary"><ExperimentOutlined /> Ingress</Text>
+              <Text strong>{selectedProject?.source?.block || '?'}</Text>
+            </div>
+            <div className="projectMetaPanel">
+              <Text type="secondary"><ClusterOutlined /> Transform</Text>
+              <Text strong>{selectedProject?.processing?.length ? selectedProject.processing.map((item) => item.block).join(', ') : 'none'}</Text>
+            </div>
+            <div className="projectMetaPanel">
+              <Text type="secondary"><DesktopOutlined /> Egress</Text>
+              <Text strong>{selectedProject?.destination?.block || '?'}</Text>
+            </div>
+            <div className="projectMetaPanel">
+              <Text type="secondary"><ClusterOutlined /> Graph</Text>
+              <Space wrap size={[4, 4]}>
+                <Tag>{selectedProject?.graph?.nodes?.length ?? 0} nodes</Tag>
+                <Tag>{selectedProject?.graph?.edges?.length ?? 0} edges</Tag>
+                <Tag>{projects.length} projects</Tag>
+              </Space>
+            </div>
+          </div>
+          <Collapse
+            ghost
+            size="small"
+            items={[
+              {
+                key: 'advanced-actions',
+                label: <Space size={6}><ApiOutlined /><span>Advanced</span></Space>,
+                children: (
+                  <Space wrap>
+                    <Button type="primary" danger icon={<RocketOutlined />} loading={projectBusy === 'flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={() => runProjectAction('flash')}>{`Flash ${activeBuildProfile?.name || 'Build'}`}</Button>
+                    <Button icon={<DisconnectOutlined />} loading={projectBusy === 'prepare-browser-flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={prepareBrowserFlash}>Prepare Browser Flash</Button>
+                    <Button icon={<ReloadOutlined />} loading={projectBusy === 'reconnect-browser-flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={reconnectAfterBrowserFlash}>Reconnect Lab</Button>
+                  </Space>
+                )
+              },
+              {
+                key: 'deploy-notes',
+                label: <Space size={6}><SafetyCertificateOutlined /><span>Deploy</span></Space>,
+                children: (
+                  <Space direction="vertical" className="fullWidth">
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="Flashing crosses a trust boundary"
+                      description="The backend must release serial ownership before the browser can flash the board. Production intentionally leaves the board in product mode; lab and telemetry are expected to reconnect into the interactive command path."
                     />
-                  )
-                },
+                    <MetricStrip items={[
+                      { label: 'Browser Flash', value: browserSerialSupported ? 'supported' : 'Chrome/Edge required' },
+                      { label: 'Serial Owner', value: serialOwnership?.serial_owner || status?.serial_owner || 'unknown' },
+                      { label: 'Flash State', value: browserFlashState },
+                      { label: 'Progress', value: `${browserFlashProgress}%` }
+                    ]} />
+                    {flashManifest ? <JsonBlock value={flashManifest} /> : null}
+                    <JsonBlock value={activeBuildProfile} />
+                  </Space>
+                )
+              }
+            ]}
+          />
+          <Tabs
+            size="small"
+            items={[
+              {
+                key: 'sdk',
+                label: <Space size={6}><GithubOutlined /><span>SDK</span></Space>,
+                children: (
+                  <SdkResearchPage
+                    embedded
+                    onProjectsChanged={onProjectsChanged}
+                    onOpenProject={onOpenProject}
+                  />
+                )
+              },
+              {
+                key: 'blocks',
+                label: <Space size={6}><ApartmentOutlined /><span>Blocks</span></Space>,
+                children: (
+                  <Table
+                    size="small"
+                    pagination={false}
+                    dataSource={projectBlockRows(selectedProject, blocks)}
+                    columns={[
+                      { title: '', dataIndex: 'kind', width: 54, render: (kind: string) => <Tooltip title={kind}><Tag>{kind.slice(0, 3)}</Tag></Tooltip> },
+                      { title: 'Block', dataIndex: 'name' },
+                      {
+                        title: '',
+                        dataIndex: 'status',
+                        width: 68,
+                        render: (blockStatus: string, row: { origin: string }) => (
+                          <Tooltip title={`${row.origin} / ${blockStatus}`}>
+                            <Tag color={blockStatus.includes('validated') || blockStatus.includes('working') ? 'green' : 'blue'}>
+                              {row.origin === 'graph' ? 'G' : 'R'}
+                            </Tag>
+                          </Tooltip>
+                        )
+                      }
+                    ]}
+                  />
+                )
+              },
                 {
-                  key: 'validation',
-                  label: 'Validation',
-                  children: validation ? (
-                    <Space direction="vertical" className="fullWidth">
-                      <Tag color={validation.ok ? 'green' : 'red'}>{validation.ok ? 'valid' : 'blocked'}</Tag>
-                      {validation.errors.map((error) => <Alert key={error} type="error" showIcon message={error} />)}
-                      {validation.warnings.map((warning) => <Alert key={warning} type="warning" showIcon message={warning} />)}
-                      <JsonBlock value={{ source_gpios: validation.source_gpios, destination_gpios: validation.destination_gpios }} />
-                    </Space>
-                  ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Validate a project" />
-                },
-                {
-                  key: 'result',
-                  label: 'Result',
-                  children: projectResult ? <JsonBlock value={projectResult} /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No build or flash result yet" />
-                },
-                {
-                  key: 'browser-flash',
-                  label: 'Browser Flash',
-                  children: (
-                    <Space direction="vertical" className="fullWidth">
+                key: 'validation',
+                label: <Space size={6}><CheckCircleOutlined /><span>Validation</span></Space>,
+                children: validation ? (
+                  <Space direction="vertical" className="fullWidth">
+                    <Tag color={validation.ok ? 'green' : 'red'}>{validation.ok ? 'valid' : 'blocked'}</Tag>
+                    {validation.errors.map((error) => <Alert key={error} type="error" showIcon message={error} />)}
+                    {validation.warnings.map((warning) => <Alert key={warning} type="warning" showIcon message={warning} />)}
+                    <MetricStrip items={[
+                      { label: 'Source GPIOs', value: validation.source_gpios.length },
+                      { label: 'Destination GPIOs', value: validation.destination_gpios.length },
+                      { label: 'Errors', value: validation.errors.length },
+                      { label: 'Warnings', value: validation.warnings.length }
+                    ]} />
+                    <JsonBlock value={{ source_gpios: validation.source_gpios, destination_gpios: validation.destination_gpios }} />
+                  </Space>
+                ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Validate a project" />
+              },
+              {
+                key: 'result',
+                label: <Space size={6}><FileSearchOutlined /><span>Result</span></Space>,
+                children: projectResult ? (
+                  <Space direction="vertical" className="fullWidth">
+                    <Alert
+                      type={projectResult && typeof projectResult === 'object' && 'ok' in projectResult && projectResult.ok ? 'success' : 'error'}
+                      showIcon
+                      message={`Last action: ${String((projectResult as Record<string, unknown>).action || 'unknown')}`}
+                      description={String((projectResult as Record<string, unknown>).error || 'Operation completed.')}
+                    />
+                    <JsonBlock value={projectResult} />
+                  </Space>
+                ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No build or flash result yet" />
+              },
+              {
+                key: 'browser-flash',
+                label: <Space size={6}><ThunderboltOutlined /><span>Browser Flash</span></Space>,
+                children: (
+                  <Space direction="vertical" className="fullWidth">
                       {!browserSerialSupported ? <Alert type="warning" showIcon message="Browser flashing requires desktop Chrome or Edge with Web Serial support." /> : null}
                       <Tag color={browserFlashState === 'error' ? 'red' : browserFlashState === 'reconnected' || browserFlashState === 'flashed' ? 'green' : 'blue'}>{browserFlashState}</Tag>
+                      <Progress percent={browserFlashProgress} size="small" status={browserFlashState === 'error' ? 'exception' : browserFlashState === 'flashed' || browserFlashState === 'reconnected' ? 'success' : 'active'} />
                       <JsonBlock value={{
                         serial_ownership: serialOwnership,
                         manifest: flashManifest,
@@ -701,11 +1241,10 @@ function ProjectPage({
                     </Space>
                   )
                 }
-              ]}
-            />
-          </Card>
+            ]}
+          />
         </Space>
-      </div>
+      </Card>
     </Space>
   );
 }
@@ -737,20 +1276,253 @@ const esp32p4Regions = [
   }
 ];
 
-function Esp32p4Dashboard({ activeBlocks }: { activeBlocks: Set<string> }) {
+function inferResourceCards({
+  activeBlocks,
+  selectedProject,
+  status,
+  profile,
+  destinationProfile
+}: {
+  activeBlocks: Set<string>;
+  selectedProject: LabProject | null;
+  status: WorkbenchStatus | null;
+  profile: TargetProfile | null;
+  destinationProfile: DestinationProfile | null;
+}): ResourceCardData[] {
+  const cards: ResourceCardData[] = [];
+  const sourceBlock = selectedProject?.source?.block || 'unassigned source';
+  const destinationBlock = selectedProject?.destination?.block || 'unassigned destination';
+  const processingBlocks = (selectedProject?.processing || []).map((item) => item.block);
+  const graphNodes = Array.isArray(selectedProject?.graph?.nodes) ? selectedProject?.graph?.nodes.length : 0;
+  const graphEdges = Array.isArray(selectedProject?.graph?.edges) ? selectedProject?.graph?.edges.length : 0;
+  const captureProfile = profile?.current_capture_profile;
+  const lcdMode = [captureProfile?.capture_peripheral, captureProfile?.data_mode].filter(Boolean).join(' · ') || 'capture path';
+  const lcdFacts = [
+    profile?.profile_id ? `profile ${profile.profile_id}` : 'profile unknown',
+    status?.server_capture_fps ? `${status.server_capture_fps.toFixed(1)} fps` : 'fps unavailable',
+    status?.server_frame_count ? `${status.server_frame_count} frames` : 'no frames yet'
+  ];
+
+  const push = (card: ResourceCardData) => cards.push(card);
+
+  if (activeBlocks.has('LCD_CAM')) {
+    push({
+      key: 'LCD_CAM',
+      block: 'LCD_CAM',
+      region: 'Image / Video',
+      status: status?.running ? 'active' : status?.device_connected ? 'reserved' : 'idle',
+      owner: sourceBlock,
+      mode: lcdMode,
+      health: status?.running ? 'Capturing live source frames.' : 'Ready for capture when the lab stream starts.',
+      risk: status?.error ? status.error : status?.running && !status?.device_connected ? 'Capture requested without a connected device.' : 'No immediate capture risk.',
+      facts: lcdFacts
+    });
+  }
+
+  if (activeBlocks.has('SPI')) {
+    const spi = destinationProfile?.destination?.spi;
+    push({
+      key: 'SPI',
+      block: 'SPI',
+      region: 'Connectivity',
+      status: destinationBlock.includes('spi') ? 'active' : 'reserved',
+      owner: destinationBlock,
+      mode: `${destinationProfile?.destination?.controller_ic || 'panel'} · mode ${spi?.mode ?? 0}`,
+      health: spi?.pclk_hz_initial ? `Prepared for panel writes at ${Math.round(spi.pclk_hz_initial / 1000000)} MHz.` : 'SPI destination path configured.',
+      risk: spi?.pclk_hz_initial && spi.pclk_hz_initial >= 70000000 ? 'High SPI clock; signal integrity margins matter.' : 'No active queue or draw telemetry in lab mode.',
+      facts: [
+        spi?.pclk_hz_initial ? `${Math.round(spi.pclk_hz_initial / 1000000)} MHz` : 'clk unknown',
+        destinationProfile?.destination?.native_resolution ? `${destinationProfile.destination.native_resolution.width}x${destinationProfile.destination.native_resolution.height}` : 'resolution unknown',
+        destinationProfile?.destination?.interface || 'display bus'
+      ]
+    });
+  }
+
+  if (activeBlocks.has('GDMA')) {
+    push({
+      key: 'GDMA',
+      block: 'GDMA',
+      region: 'DMA / Memory Movement',
+      status: status?.running ? 'active' : 'reserved',
+      owner: processingBlocks[0] || sourceBlock,
+      mode: 'frame transport',
+      health: status?.running ? 'DMA path active in the live capture loop.' : 'Reserved for frame movement and burst capture.',
+      risk: status?.consecutive_errors ? `${status.consecutive_errors} recent transport errors.` : 'No recent DMA transport faults reported.',
+      facts: [
+        'frame ring',
+        activeBlocks.has('Internal DMA RAM') ? 'internal DMA slots' : 'shared buffers',
+        graphNodes ? `${graphNodes} graph nodes` : 'no graph nodes'
+      ]
+    });
+  }
+
+  if (activeBlocks.has('Internal DMA RAM')) {
+    push({
+      key: 'Internal DMA RAM',
+      block: 'Internal DMA RAM',
+      region: 'DMA / Memory Movement',
+      status: 'reserved',
+      owner: processingBlocks[0] || 'frame pipeline',
+      mode: 'DMA-safe frame slots',
+      health: 'Allocated for deterministic transfer ownership.',
+      risk: activeBlocks.has('PSRAM') ? 'Watch contention with PSRAM-backed stages.' : 'Low risk with isolated DMA slots.',
+      facts: ['low latency', 'DMA capable', graphEdges ? `${graphEdges} graph edges` : 'graph sparse']
+    });
+  }
+
+  if (activeBlocks.has('PSRAM')) {
+    push({
+      key: 'PSRAM',
+      block: 'PSRAM',
+      region: 'DMA / Memory Movement',
+      status: 'warning',
+      owner: 'frame buffers / artifacts',
+      mode: 'bulk storage',
+      health: 'Available for larger capture or render buffers.',
+      risk: 'Higher latency and contention risk than internal DMA RAM.',
+      facts: ['external RAM', 'large buffers', 'avoid hot overlap']
+    });
+  }
+
+  if (activeBlocks.has('GPIO Matrix / IO MUX')) {
+    push({
+      key: 'GPIO Matrix / IO MUX',
+      block: 'GPIO Matrix / IO MUX',
+      region: 'HP Core System',
+      status: 'reserved',
+      owner: sourceBlock,
+      mode: 'pin routing',
+      health: 'Source and destination profiles define active pin ownership.',
+      risk: 'Pin conflicts are controlled by project validation.',
+      facts: [
+        profile?.signals?.timing_or_control ? `${profile.signals.timing_or_control.length} timing lines` : 'timing lines unknown',
+        destinationProfile?.connector?.pins ? `${destinationProfile.connector.pins.length} destination pins` : 'destination pins unknown',
+        'validation gated'
+      ]
+    });
+  }
+
+  if (activeBlocks.has('USB Serial/JTAG')) {
+    push({
+      key: 'USB Serial/JTAG',
+      block: 'USB Serial/JTAG',
+      region: 'Connectivity',
+      status: status?.serial_owner === 'browser_flash' ? 'warning' : status?.device_connected ? 'active' : 'idle',
+      owner: status?.serial_owner === 'browser_flash' ? 'browser flash' : 'workbench backend',
+      mode: status?.serial_owner === 'browser_flash' ? 'handoff to browser' : 'lab transport',
+      health: status?.device_connected ? 'Interactive control path is available.' : 'No board is currently attached to the lab transport.',
+      risk: status?.serial_owner === 'browser_flash' ? 'Backend control is suspended until reconnect.' : 'No transport risk reported.',
+      facts: [
+        status?.serial_port || 'no port',
+        status?.serial_owner || 'backend',
+        status?.running ? 'streaming' : 'idle'
+      ]
+    });
+  }
+
+  const genericActive = Array.from(activeBlocks)
+    .filter((block) => !cards.some((card) => card.block === block))
+    .slice(0, 8);
+
+  for (const block of genericActive) {
+    const region = esp32p4Regions.find((entry) => entry.blocks.includes(block))?.title || 'Other';
+    push({
+      key: block,
+      block,
+      region,
+      status: 'reserved',
+      owner: processingBlocks[0] || selectedProject?.name || 'project runtime',
+      mode: 'project scoped',
+      health: 'Resource is claimed by the selected project.',
+      risk: 'Detailed live telemetry for this block is not wired into the dashboard yet.',
+      facts: ['owned', region, 'inspect graph for detail']
+    });
+  }
+
+  return cards;
+}
+
+function ResourceCard({ card }: { card: ResourceCardData }) {
+  const statusColor = card.status === 'active'
+    ? 'green'
+    : card.status === 'reserved'
+      ? 'blue'
+      : card.status === 'warning'
+        ? 'gold'
+        : card.status === 'error'
+          ? 'red'
+          : 'default';
+
   return (
-    <div className="mcuDashboard">
+    <Card size="small" className={`resourceCard resourceCard-${card.status}`}>
+      <div className="resourceCardHeader">
+        <Space size={6}>
+          <span className={`resourceDot resourceDot-${card.status}`} />
+          <Text strong>{card.block}</Text>
+        </Space>
+        <Tooltip title={`Owner: ${card.owner}`}>
+          <Tag color={statusColor}>{card.owner}</Tag>
+        </Tooltip>
+      </div>
+      <div className="resourceCardBody">
+        <div className="resourceCardMode">
+          <Tag>{card.mode}</Tag>
+        </div>
+        <div className="resourceFactRow">
+          {card.facts.slice(0, 2).map((fact) => <Tag key={fact}>{fact}</Tag>)}
+        </div>
+      </div>
+      <div className="resourceCardFooter">
+        <Tooltip title={`Health: ${card.health}`}>
+          <Tag className="resourceMetaTag" color={card.status === 'error' ? 'red' : card.status === 'warning' ? 'gold' : 'green'}>
+            <CheckCircleOutlined />
+          </Tag>
+        </Tooltip>
+        <Tooltip title={`Risk: ${card.risk}`}>
+          <Tag className="resourceMetaTag" color={card.status === 'error' ? 'red' : card.status === 'warning' ? 'gold' : 'default'}>
+            <WarningOutlined />
+          </Tag>
+        </Tooltip>
+        {card.facts[2] ? (
+          <Tooltip title={card.facts[2]}>
+            <Tag className="resourceMetaTag">{card.facts[2]}</Tag>
+          </Tooltip>
+        ) : null}
+        <Tooltip title={card.region}>
+          <Tag className="resourceMetaTag">{card.region}</Tag>
+        </Tooltip>
+      </div>
+    </Card>
+  );
+}
+
+function Esp32p4ResourceMatrix({ activeBlocks }: { activeBlocks: Set<string> }) {
+  return (
+    <div className="resourceMatrix">
       {esp32p4Regions.map((region) => (
-        <div className="mcuRegion" key={region.title}>
-          <div className="mcuRegionTitle">{region.title}</div>
-          <div className="mcuBlockGrid">
+        <div className="resourceMatrixRegion" key={region.title}>
+          <Text className="resourceMatrixTitle">{region.title}</Text>
+          <div className="resourceMatrixGrid">
             {region.blocks.map((block) => {
               const active = activeBlocks.has(block);
-              return <Tag className={`mcuBlock ${active ? 'mcuBlockActive' : ''}`} color={active ? 'green' : 'default'} key={block}>{block}</Tag>;
+              return (
+                <div className={`resourceChip ${active ? 'resourceChipActive' : ''}`} key={block}>
+                  <span className={`resourceDot resourceDot-${active ? 'active' : 'idle'}`} />
+                  <span>{block}</span>
+                </div>
+              );
             })}
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function Esp32p4Dashboard({ cards }: { cards: ResourceCardData[] }) {
+  return (
+    <div className="resourceDashboard">
+      {cards.map((card) => <ResourceCard key={card.key} card={card} />)}
     </div>
   );
 }
@@ -776,17 +1548,21 @@ function DashboardPage({
     ].filter(Boolean));
   }, [selectedProject, status?.device_connected]);
   const activeProjectRows = useMemo(() => projectBlockRows(selectedProject, blocks), [selectedProject, blocks]);
+  const resourceCards = useMemo(() => inferResourceCards({
+    activeBlocks,
+    selectedProject,
+    status,
+    profile,
+    destinationProfile
+  }), [activeBlocks, destinationProfile, profile, selectedProject, status]);
 
   return (
     <Space direction="vertical" size="small" className="pageStack">
-      <MetricStrip items={[
-        { label: 'Device', value: status?.device_connected ? <Tag color="green">online</Tag> : <Tag color="orange">offline</Tag> },
-        { label: 'Project', value: selectedProject?.name || 'none' },
-        { label: 'Signal Profile', value: profile?.profile_id || 'unknown' },
-        { label: 'I/O Profile', value: destinationProfile?.profile_id || 'unknown' }
-      ]} />
-      <Card size="small" title="ESP32-P4 Block Dashboard">
-        <Esp32p4Dashboard activeBlocks={activeBlocks} />
+      <Card size="small" title="MCU Resource Map">
+        <Esp32p4ResourceMatrix activeBlocks={activeBlocks} />
+      </Card>
+      <Card size="small" title="Active Resources">
+        {resourceCards.length ? <Esp32p4Dashboard cards={resourceCards} /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No active resources inferred from the selected project" />}
       </Card>
       <Card size="small" title="Project Blocks">
         <Table
@@ -823,9 +1599,20 @@ function GraphPage({
 }) {
   const project = selectedProject;
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(true);
   const [graphTool, setGraphTool] = useState('select');
   const [selectedGraphNode, setSelectedGraphNode] = useState<Node | null>(null);
   const [graphDirty, setGraphDirty] = useState(false);
+  const [graphLibraryQuery, setGraphLibraryQuery] = useState('');
+  const [libraryRoot, setLibraryRoot] = useState<GraphLibraryRoot>('sdf');
+  const libraryEntries = useMemo(() => graphLibraryEntries(), []);
+  const libraryRoots = useMemo(() => ([
+    { key: 'intent' as const, icon: <ProfileOutlined />, label: 'Intent' },
+    { key: 'sdf' as const, icon: <ApiOutlined />, label: 'SDF' },
+    { key: 'sdk' as const, icon: <BugOutlined />, label: 'SDK' },
+    { key: 'resource' as const, icon: <ClusterOutlined />, label: 'ESP32-P4' },
+    { key: 'external' as const, icon: <LinkOutlined />, label: 'I/O' }
+  ]), []);
 
   const graphNodeSummary = (node: Record<string, unknown>, type: string) => {
     const params = node.params && typeof node.params === 'object' ? node.params as Record<string, unknown> : {};
@@ -842,6 +1629,11 @@ function GraphPage({
     return type;
   };
 
+  const graphNodeCategory = (node: Record<string, unknown>, type: string) => {
+    const lane = graphLaneForNode(node, type);
+    return graphLanes.find((entry) => entry.id === lane)?.label || lane;
+  };
+
   const graphNodeColor = (type: string) => {
     if (type === 'system_intent') return 'gold';
     if (type === 'lab_function_block') return 'blue';
@@ -855,23 +1647,32 @@ function GraphPage({
   const flowNodes: Node[] = useMemo(() => {
     const graphNodes = project?.graph?.nodes;
     if (Array.isArray(graphNodes) && graphNodes.length > 0) {
+      const laneRows = new Map<GraphLaneId, number>();
       return graphNodes.map((node, index) => {
         const position = node.position && typeof node.position === 'object' ? node.position as { x?: unknown; y?: unknown } : {};
         const label = String(node.label || node.type || node.id || `node_${index}`);
         const type = String(node.type || 'block');
+        const lane = graphLaneForNode(node, type);
+        const laneMeta = graphLanes.find((entry) => entry.id === lane) || graphLanes[2];
+        const laneRow = laneRows.get(lane) || 0;
+        laneRows.set(lane, laneRow + 1);
         return {
           id: String(node.id || `node_${index}`),
           position: {
-            x: typeof position.x === 'number' ? position.x : index * 300,
-            y: typeof position.y === 'number' ? position.y : 180
+            x: laneMeta.x,
+            y: typeof position.y === 'number' ? position.y : 140 + laneRow * 170
           },
-          className: `flowNodeType-${type.replace(/[^A-Za-z0-9_-]+/g, '-')}`,
+          className: `flowNodeType-${type.replace(/[^A-Za-z0-9_-]+/g, '-')} flowNodeLane-${lane}`,
           data: {
             raw: node,
             type,
+            lane,
             label: (
               <div className="flowNode">
-                <Tag color={graphNodeColor(type)}>{type}</Tag>
+                <div className="flowNodeMeta">
+                  <Tag color={graphNodeColor(type)}>{type}</Tag>
+                  <Tag>{graphNodeCategory(node, type)}</Tag>
+                </div>
                 <Text strong>{label}</Text>
                 <Text type="secondary">{graphNodeSummary(node, type)}</Text>
               </div>
@@ -972,11 +1773,17 @@ function GraphPage({
   const selectedNodeOverlay = selectedNodeParams.overlay && typeof selectedNodeParams.overlay === 'object'
     ? selectedNodeParams.overlay as Record<string, unknown>
     : {};
-  const isRtosTaskNode = selectedRawNode?.type === 'lab_function_block'
-    && (selectedNodeParams.api_group === 'freertos' || String(selectedRawNode.label || '').toLowerCase().includes('task'));
+  const selectedNodeSpec = selectedRawNode ? resolveGraphBlockSpec(selectedRawNode) : null;
+  const selectedNodeOverlayParams = selectedNodeOverlay.params && typeof selectedNodeOverlay.params === 'object'
+    ? selectedNodeOverlay.params as Record<string, unknown>
+    : {};
+  const selectedNodeTelemetry = selectedNodeOverlay.telemetry && typeof selectedNodeOverlay.telemetry === 'object'
+    ? selectedNodeOverlay.telemetry as Record<string, unknown>
+    : {};
   const selectedNodeId = selectedRawNode ? String(selectedRawNode.id || selectedGraphNode?.id || '') : '';
   const selectedNodeType = selectedRawNode ? String(selectedRawNode.type || 'block') : '';
   const selectedNodeLabel = selectedRawNode ? String(selectedRawNode.label || selectedNodeId || 'Block') : '';
+  const selectedNodeLane = selectedRawNode ? graphNodeCategory(selectedRawNode, selectedNodeType) : '';
   const selectedNodePorts = selectedRawNode?.ports && typeof selectedRawNode.ports === 'object'
     ? selectedRawNode.ports as Record<string, unknown>
     : {};
@@ -995,15 +1802,36 @@ function GraphPage({
       }))
     : [];
   const selectedProjectBlockRows = useMemo(() => projectBlockRows(project, blocks), [project, blocks]);
-  const rtosTaskOverlay = {
-    enabled: typeof selectedNodeOverlay.enabled === 'boolean' ? selectedNodeOverlay.enabled : true,
-    task_name: String(selectedNodeOverlay.task_name || 'app_main'),
-    priority: typeof selectedNodeOverlay.priority === 'number' ? selectedNodeOverlay.priority : 5,
-    stack_size_bytes: typeof selectedNodeOverlay.stack_size_bytes === 'number' ? selectedNodeOverlay.stack_size_bytes : 4096,
-    core_affinity: String(selectedNodeOverlay.core_affinity || 'any'),
-    notes: String(selectedNodeOverlay.notes || ''),
-    source_write_policy: String(selectedNodeOverlay.source_write_policy || 'overlay_only')
-  };
+  const filteredLibraryEntries = useMemo(() => {
+    const query = graphLibraryQuery.trim().toLowerCase();
+    if (!query) return libraryEntries;
+    return libraryEntries.filter((entry) =>
+      entry.spec.title.toLowerCase().includes(query)
+      || entry.spec.category.toLowerCase().includes(query)
+      || entry.spec.summary.toLowerCase().includes(query)
+      || entry.spec.capabilities.some((capability) => capability.toLowerCase().includes(query))
+      || entry.nodeTemplate.type.toLowerCase().includes(query)
+    );
+  }, [graphLibraryQuery, libraryEntries]);
+  const rootedLibraryEntries = useMemo(() => {
+    const byRoot = filteredLibraryEntries.filter((entry) =>
+      libraryRoot === 'intent'
+        ? entry.family === 'intent'
+        : libraryRoot === 'sdf'
+          ? entry.family === 'sdf'
+          : libraryRoot === 'sdk'
+            ? entry.family === 'sdk'
+            : libraryRoot === 'resource'
+              ? entry.family === 'resource'
+              : entry.family === 'external'
+    );
+    const grouped = new Map<string, GraphLibraryEntry[]>();
+    for (const entry of byRoot) {
+      const key = entry.spec.category;
+      grouped.set(key, [...(grouped.get(key) || []), entry]);
+    }
+    return Array.from(grouped.entries()).map(([category, entries]) => ({ category, entries }));
+  }, [filteredLibraryEntries, libraryRoot]);
 
   const updateSelectedNodeOverlay = (patch: Record<string, unknown>) => {
     if (!project?.graph?.nodes || !selectedGraphNode) return;
@@ -1041,6 +1869,30 @@ function GraphPage({
     }
   };
 
+  const updateSelectedNodeOverlayParams = (patch: Record<string, unknown>) => {
+    updateSelectedNodeOverlay({
+      params: {
+        ...selectedNodeOverlayParams,
+        ...patch
+      }
+    });
+  };
+
+  const updateSelectedNodeTelemetry = (patch: Record<string, unknown>) => {
+    updateSelectedNodeOverlay({
+      telemetry: {
+        ...selectedNodeTelemetry,
+        ...patch
+      }
+    });
+  };
+
+  const fieldValueForSpec = (field: BlockFieldSpec) => {
+    if (selectedNodeOverlayParams[field.key] !== undefined) return selectedNodeOverlayParams[field.key];
+    if (selectedNodeOverlay[field.key] !== undefined) return selectedNodeOverlay[field.key];
+    return field.defaultValue;
+  };
+
   const updateNodePosition = (node: Node) => {
     if (!project?.graph?.nodes) return;
     const nextProject: LabProject = {
@@ -1063,13 +1915,147 @@ function GraphPage({
     setGraphDirty(false);
   };
 
+  useEffect(() => {
+    if (graphTool !== 'select') {
+      setPaletteOpen(false);
+      return;
+    }
+    setPaletteOpen(true);
+  }, [graphTool]);
+
+  const addGraphNodeFromLibrary = (entry: GraphLibraryEntry) => {
+    if (!project) return;
+    const existingNodes = Array.isArray(project.graph?.nodes) ? project.graph.nodes : [];
+    const existingEdges = Array.isArray(project.graph?.edges) ? project.graph.edges : [];
+    const nextIndex = existingNodes.length + 1;
+    const laneMeta = graphLanes.find((lane) => lane.id === entry.lane) || graphLanes[2];
+    const laneNodes = existingNodes.filter((node) => {
+      const type = String(node.type || '');
+      const lane = graphLaneForNode(node, type);
+      return lane === entry.lane;
+    }).length;
+    const baseId = `${entry.nodeTemplate.type}_${nextIndex}`;
+    const nextNode = {
+      id: baseId,
+      type: entry.nodeTemplate.type,
+      label: entry.nodeTemplate.label,
+      position: {
+        x: laneMeta.x,
+        y: 140 + laneNodes * 170
+      },
+      ports: entry.nodeTemplate.ports || {},
+      params: entry.nodeTemplate.params || {}
+    };
+    const nextProject: LabProject = {
+      ...project,
+      graph: {
+        nodes: [...existingNodes, nextNode],
+        edges: existingEdges
+      }
+    };
+    setGraphDirty(true);
+    onProjectDraftChange(nextProject);
+    setSelectedGraphNode({
+      id: baseId,
+      position: nextNode.position,
+      data: {
+        raw: nextNode,
+        type: entry.nodeTemplate.type,
+        lane: entry.lane,
+        label: (
+          <div className="flowNode">
+            <div className="flowNodeMeta">
+              <Tag color={graphNodeColor(entry.nodeTemplate.type)}>{entry.nodeTemplate.type}</Tag>
+              <Tag>{laneMeta.label}</Tag>
+            </div>
+            <Text strong>{entry.nodeTemplate.label}</Text>
+            <Text type="secondary">{entry.spec.summary}</Text>
+          </div>
+        )
+      }
+    } as Node);
+    setInspectorOpen(true);
+  };
+
+  const renderSpecField = (field: BlockFieldSpec) => {
+    const value = fieldValueForSpec(field);
+    const commonLabel = <Text className="editorLabel">{field.label}</Text>;
+
+    if (field.type === 'switch') {
+      return (
+        <Space className="fullWidth" align="center" key={field.key}>
+          {commonLabel}
+          <Switch
+            checked={Boolean(value)}
+            onChange={(checked) => updateSelectedNodeOverlayParams({ [field.key]: checked })}
+          />
+        </Space>
+      );
+    }
+
+    if (field.type === 'textarea') {
+      return (
+        <div key={field.key}>
+          {commonLabel}
+          <Input.TextArea
+            rows={3}
+            value={String(value ?? '')}
+            onChange={(event) => updateSelectedNodeOverlayParams({ [field.key]: event.target.value })}
+            placeholder={field.description || ''}
+          />
+        </div>
+      );
+    }
+
+    if (field.type === 'number') {
+      return (
+        <div key={field.key}>
+          <Space className="editorHeaderRow">
+            {commonLabel}
+            <InputNumber
+              min={field.min}
+              max={field.max}
+              step={field.step}
+              value={typeof value === 'number' ? value : Number(value ?? field.defaultValue ?? 0)}
+              addonAfter={field.unit}
+              onChange={(next) => updateSelectedNodeOverlayParams({ [field.key]: Number(next ?? field.defaultValue ?? 0) })}
+            />
+          </Space>
+        </div>
+      );
+    }
+
+    if (field.type === 'select') {
+      return (
+        <div key={field.key}>
+          {commonLabel}
+          <Select
+            className="fullWidth"
+            value={String(value ?? field.defaultValue ?? '')}
+            options={field.options || []}
+            onChange={(next) => updateSelectedNodeOverlayParams({ [field.key]: next })}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div key={field.key}>
+        {commonLabel}
+        <Input
+          value={String(value ?? '')}
+          onChange={(event) => updateSelectedNodeOverlayParams({ [field.key]: event.target.value })}
+          placeholder={field.description || ''}
+        />
+      </div>
+    );
+  };
+
   return (
     <div className={`graphWorkspace ${inspectorOpen ? 'inspectorOpen' : ''}`}>
       <div className="graphTopBar">
         <Space>
           <Text strong>Project Flowgraph</Text>
-          <Tag color={project?.status.includes('validated') ? 'green' : 'blue'}>{project?.id || 'no-project'}</Tag>
-          <Tag>{status?.device_connected ? 'device online' : 'offline'}</Tag>
           <Tag color="purple">{graphTool}</Tag>
           {graphDirty ? <Tag color="orange">layout draft</Tag> : null}
         </Space>
@@ -1079,6 +2065,12 @@ function GraphPage({
           </Tooltip>
           <Tooltip title="Resource view">
             <Button size="small" type={graphTool === 'resources' ? 'primary' : 'default'} icon={<DatabaseOutlined />} onClick={() => setGraphTool('resources')} />
+          </Tooltip>
+          <Tooltip title="Block library">
+            <Button size="small" type={paletteOpen && graphTool === 'select' ? 'primary' : 'default'} icon={<ApartmentOutlined />} onClick={() => {
+              setGraphTool('select');
+              setPaletteOpen((open) => !open);
+            }} />
           </Tooltip>
           <Tooltip title="Signal/dataflow view">
             <Button size="small" type={graphTool === 'flow' ? 'primary' : 'default'} icon={<ApiOutlined />} onClick={() => setGraphTool('flow')} />
@@ -1094,7 +2086,73 @@ function GraphPage({
           </Tooltip>
         </Space.Compact>
       </div>
+      <div className={`graphPaletteDrawer ${paletteOpen ? 'open' : ''}`}>
+        <div className="drawerTitle">
+          <Text strong>Select And Build</Text>
+          <Button size="small" onClick={() => setPaletteOpen(false)}>Close</Button>
+        </div>
+        <Search
+          allowClear
+          size="small"
+          placeholder="Search blocks, resources, APIs"
+          value={graphLibraryQuery}
+          onChange={(event) => setGraphLibraryQuery(event.target.value)}
+        />
+        <div className="graphLibraryWorkbench">
+          <div className="graphLibraryRoots">
+            {libraryRoots.map((root) => (
+              <Tooltip title={root.label} key={root.key}>
+                <Button
+                  size="small"
+                  type={libraryRoot === root.key ? 'primary' : 'default'}
+                  icon={root.icon}
+                  onClick={() => setLibraryRoot(root.key)}
+                />
+              </Tooltip>
+            ))}
+          </div>
+          <div className="graphLibraryTree">
+            <Collapse
+              size="small"
+              ghost
+              items={rootedLibraryEntries.map((group) => ({
+                key: group.category,
+                label: group.category,
+                children: (
+                  <div className="graphLibraryList">
+                    {group.entries.map((entry) => (
+                      <Card
+                        key={entry.id}
+                        size="small"
+                        className="graphLibraryCard"
+                        extra={<Button size="small" type="text" onClick={() => addGraphNodeFromLibrary(entry)}>Add</Button>}
+                      >
+                        <Space direction="vertical" size={2} className="fullWidth">
+                          <Space wrap size={[4, 4]}>
+                            <Tag>{entry.nodeTemplate.type}</Tag>
+                            <Tag>{entry.spec.category}</Tag>
+                          </Space>
+                          <Text strong>{entry.spec.title}</Text>
+                          <Text type="secondary">{entry.spec.summary}</Text>
+                        </Space>
+                      </Card>
+                    ))}
+                  </div>
+                )
+              }))}
+            />
+            {rootedLibraryEntries.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No matching blocks" /> : null}
+          </div>
+        </div>
+      </div>
       <div className="graphSurface">
+        <div className="graphLaneOverlay" aria-hidden="true">
+          {graphLanes.map((lane) => (
+            <div className="graphLanePill" key={lane.id}>
+              <Tag color={lane.color}>{lane.label}</Tag>
+            </div>
+          ))}
+        </div>
         <div className="flowCanvas">
           <ReactFlow
             nodes={visibleFlowNodes}
@@ -1131,96 +2189,98 @@ function GraphPage({
                     <Space direction="vertical" size="small" className="fullWidth">
                       <Space wrap>
                         <Tag color={graphNodeColor(selectedNodeType)}>{selectedNodeType}</Tag>
+                        {selectedNodeLane ? <Tag>{selectedNodeLane}</Tag> : null}
                         <Text strong>{selectedNodeLabel}</Text>
                       </Space>
                       <Text type="secondary">{selectedNodeId}</Text>
                       <Space wrap>
-                        <Tag color={isRtosTaskNode ? 'green' : 'default'}>{isRtosTaskNode ? 'typed editor' : 'read-only inspector'}</Tag>
+                        <Tag color={selectedNodeSpec ? 'green' : 'default'}>{selectedNodeSpec ? 'typed editor' : 'read-only inspector'}</Tag>
                         {selectedNodeOverlay.source_write_policy ? <Tag color="blue">{String(selectedNodeOverlay.source_write_policy)}</Tag> : null}
                         {graphDirty ? <Tag color="orange">unsaved overlay/layout</Tag> : null}
                       </Space>
                     </Space>
                   </Card>
-                  {isRtosTaskNode ? (
-                    <Card size="small" title="RTOS Task" className="inspectorEditorCard">
-                      <Space direction="vertical" size="middle" className="fullWidth">
-                        <Space className="fullWidth" align="center">
-                          <Text className="editorLabel">Enabled</Text>
-                          <Switch
-                            checked={rtosTaskOverlay.enabled}
-                            onChange={(enabled) => updateSelectedNodeOverlay({ enabled })}
-                          />
-                          <Tag color="blue">draft</Tag>
+                  {selectedNodeSpec ? (
+                    <Space direction="vertical" size="small" className="fullWidth">
+                      <Card size="small" title={selectedNodeSpec.title} className="inspectorEditorCard">
+                        <Space direction="vertical" size="small" className="fullWidth">
+                          <Text type="secondary">{selectedNodeSpec.summary}</Text>
+                          <div className="tagSection">
+                            <Text type="secondary">Capabilities</Text>
+                            <Space wrap size={[4, 4]}>
+                              {selectedNodeSpec.capabilities.map((capability) => <Tag key={capability}>{capability}</Tag>)}
+                            </Space>
+                          </div>
                         </Space>
-                        <div>
-                          <Text className="editorLabel">Task name</Text>
-                          <Input
-                            value={rtosTaskOverlay.task_name}
-                            onChange={(event) => updateSelectedNodeOverlay({ task_name: event.target.value })}
-                          />
-                        </div>
-                        <div>
-                          <Space className="editorHeaderRow">
-                            <Text className="editorLabel">Priority</Text>
-                            <InputNumber
-                              min={1}
-                              max={24}
-                              value={rtosTaskOverlay.priority}
-                              onChange={(value) => updateSelectedNodeOverlay({ priority: Number(value || 1) })}
+                      </Card>
+                      <Card size="small" title="Parameters" className="inspectorEditorCard">
+                        <Space direction="vertical" size="middle" className="fullWidth">
+                          {selectedNodeSpec.parameterFields.map((field) => renderSpecField(field))}
+                        </Space>
+                      </Card>
+                      <Card size="small" title="Telemetry" className="inspectorEditorCard">
+                        <Space direction="vertical" size="middle" className="fullWidth">
+                          <Space className="fullWidth" align="center">
+                            <Text className="editorLabel">Enabled</Text>
+                            <Switch
+                              checked={Boolean(selectedNodeTelemetry.enabled)}
+                              onChange={(enabled) => updateSelectedNodeTelemetry({ enabled })}
                             />
+                            <Tag color={selectedNodeTelemetry.enabled ? 'green' : 'default'}>{selectedNodeTelemetry.enabled ? 'armed' : 'off'}</Tag>
                           </Space>
-                          <Slider
-                            min={1}
-                            max={24}
-                            value={rtosTaskOverlay.priority}
-                            onChange={(value) => updateSelectedNodeOverlay({ priority: Number(value) })}
-                          />
-                        </div>
-                        <div>
-                          <Space className="editorHeaderRow">
-                            <Text className="editorLabel">Stack size</Text>
-                            <InputNumber
-                              min={2048}
-                              max={32768}
-                              step={1024}
-                              value={rtosTaskOverlay.stack_size_bytes}
-                              addonAfter="bytes"
-                              onChange={(value) => updateSelectedNodeOverlay({ stack_size_bytes: Number(value || 2048) })}
+                          <div>
+                            <Space className="editorHeaderRow">
+                              <Text className="editorLabel">Window</Text>
+                              <InputNumber
+                                min={50}
+                                max={5000}
+                                step={50}
+                                addonAfter="ms"
+                                value={typeof selectedNodeTelemetry.sample_window_ms === 'number' ? selectedNodeTelemetry.sample_window_ms : 250}
+                                onChange={(value) => updateSelectedNodeTelemetry({ sample_window_ms: Number(value || 250) })}
+                              />
+                            </Space>
+                          </div>
+                          <div>
+                            <Text className="editorLabel">Emit mode</Text>
+                            <Select
+                              className="fullWidth"
+                              value={String(selectedNodeTelemetry.emit_mode || 'delta')}
+                              options={[
+                                { value: 'delta', label: 'Delta' },
+                                { value: 'snapshot', label: 'Snapshot' },
+                                { value: 'threshold', label: 'Threshold' }
+                              ]}
+                              onChange={(emit_mode) => updateSelectedNodeTelemetry({ emit_mode })}
                             />
-                          </Space>
-                          <Slider
-                            min={2048}
-                            max={32768}
-                            step={1024}
-                            marks={{ 2048: '2K', 8192: '8K', 16384: '16K', 32768: '32K' }}
-                            value={rtosTaskOverlay.stack_size_bytes}
-                            onChange={(value) => updateSelectedNodeOverlay({ stack_size_bytes: Number(value) })}
-                          />
-                        </div>
-                        <div>
-                          <Text className="editorLabel">Core affinity</Text>
-                          <Select
-                            className="fullWidth"
-                            value={rtosTaskOverlay.core_affinity}
-                            options={[
-                              { value: 'any', label: 'Any core' },
-                              { value: 'core0', label: 'Core 0' },
-                              { value: 'core1', label: 'Core 1' }
-                            ]}
-                            onChange={(core_affinity) => updateSelectedNodeOverlay({ core_affinity })}
-                          />
-                        </div>
-                        <div>
-                          <Text className="editorLabel">Notes</Text>
-                          <Input.TextArea
-                            rows={3}
-                            value={rtosTaskOverlay.notes}
-                            onChange={(event) => updateSelectedNodeOverlay({ notes: event.target.value })}
-                            placeholder="Why this task exists, timing assumptions, and future generation notes."
-                          />
-                        </div>
-                      </Space>
-                    </Card>
+                          </div>
+                          <div>
+                            <Text className="editorLabel">Telemetry notes</Text>
+                            <Input.TextArea
+                              rows={2}
+                              value={String(selectedNodeTelemetry.notes || '')}
+                              onChange={(event) => updateSelectedNodeTelemetry({ notes: event.target.value })}
+                              placeholder="What this block should expose during telemetry builds."
+                            />
+                          </div>
+                          <div className="tagSection">
+                            <Text type="secondary">Channels</Text>
+                            <Space direction="vertical" size="small" className="fullWidth">
+                              {selectedNodeSpec.telemetryChannels.map((channel) => (
+                                <Space key={channel.key} className="fullWidth" align="center">
+                                  <Switch
+                                    checked={Boolean(selectedNodeTelemetry[channel.key])}
+                                    onChange={(enabled) => updateSelectedNodeTelemetry({ [channel.key]: enabled })}
+                                  />
+                                  <Text strong>{channel.label}</Text>
+                                  <Text type="secondary">{channel.description}</Text>
+                                </Space>
+                              ))}
+                            </Space>
+                          </div>
+                        </Space>
+                      </Card>
+                    </Space>
                   ) : (
                     <Alert
                       type="info"
@@ -1386,9 +2446,11 @@ function GraphPage({
 }
 
 function SdkResearchPage({
+  embedded = false,
   onProjectsChanged,
   onOpenProject
 }: {
+  embedded?: boolean;
   onProjectsChanged: (projects: LabProject[], selectedProjectId?: string) => void;
   onOpenProject: (projectId: string, page?: string) => void;
 }) {
@@ -1479,7 +2541,7 @@ function SdkResearchPage({
       setImportResult({ ok: true, project: result.project?.id, example: exampleId });
       onProjectsChanged(result.projects, result.project?.id);
       if (result.project?.id) {
-        onOpenProject(result.project.id, 'graph');
+        onOpenProject(result.project.id, embedded ? 'project' : 'graph');
       }
     } catch (error) {
       setImportResult({ ok: false, example: exampleId, error: error instanceof Error ? error.message : String(error) });
@@ -1661,7 +2723,7 @@ function SdkResearchPage({
     ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Select an Espressif repository" />
   );
 
-  return (
+  const content = (
     <Space direction="vertical" size="small" className="pageStack">
       <Card size="small" className="sdkSummaryCard">
         <div className="sdkSummaryBar">
@@ -1708,6 +2770,12 @@ function SdkResearchPage({
       </div>
     </Space>
   );
+
+  if (embedded) {
+    return content;
+  }
+
+  return content;
 }
 
 function SourcePage({ profile, pins }: { profile: TargetProfile | null; pins: PinRow[] }) {
@@ -2879,18 +3947,41 @@ function LogsPage({ logs }: { logs: string[] }) {
 }
 
 export default function App() {
-  const [selected, setSelected] = useState('dashboard');
+  const [selected, setSelected] = usePersistentState<string>('signal-lab:selected-page', 'dashboard');
   const [status, setStatus] = useState<WorkbenchStatus | null>(null);
   const [profile, setProfile] = useState<TargetProfile | null>(null);
   const [destinationProfile, setDestinationProfile] = useState<DestinationProfile | null>(null);
   const [blocks, setBlocks] = useState<LabBlock[]>([]);
   const [projects, setProjects] = useState<LabProject[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = usePersistentState<string>('signal-lab:selected-project-id', '');
   const [artifacts, setArtifacts] = useState<ArtifactItem[]>([]);
   const [pins, setPins] = useState<PinRow[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
+  const [selectedBuildProfile, setSelectedBuildProfile] = usePersistentState<string>('signal-lab:selected-build-profile', 'production');
+  const [globalProjectBusy, setGlobalProjectBusy] = useState<string | null>(null);
+  const [operationState, setOperationState] = useState<OperationState | null>(null);
+  const [operationHistory, setOperationHistory] = useState<OperationEntry[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const browserSerialSupported = typeof navigator !== 'undefined' && 'serial' in navigator;
 
   const log = (message: string) => setLogs((current) => [`${new Date().toISOString()} ${message}`, ...current].slice(0, 200));
+  const pushActivity = ({ kind, level, title, detail, projectId, buildProfile }: Omit<OperationEntry, 'id' | 'timestamp'>) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setOperationHistory((current) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        kind,
+        level,
+        title,
+        detail,
+        timestamp,
+        projectId,
+        buildProfile
+      },
+      ...current
+    ].slice(0, 16));
+    log(`${kind.toUpperCase()} ${title} ${detail}`);
+  };
 
   const refresh = async () => {
     try {
@@ -2924,6 +4015,22 @@ export default function App() {
   }), []);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || projects[0] || null;
+
+  useEffect(() => {
+    if (!selectedProject?.build_profiles) {
+      setSelectedBuildProfile('production');
+      return;
+    }
+    if (!selectedProject.build_profiles[selectedBuildProfile]) {
+      if (selectedProject.build_profiles.production) {
+        setSelectedBuildProfile('production');
+        return;
+      }
+      const firstProfile = Object.keys(selectedProject.build_profiles)[0];
+      if (firstProfile) setSelectedBuildProfile(firstProfile);
+    }
+  }, [selectedProject, selectedBuildProfile]);
+
   const replaceProjects = (nextProjects: LabProject[], preferredId?: string) => {
     setProjects(nextProjects);
     setSelectedProjectId((current) => preferredId || (nextProjects.some((project) => project.id === current) ? current : nextProjects[0]?.id || ''));
@@ -2951,6 +4058,7 @@ export default function App() {
       log(`SAVE_PROJECT ${project.id}`);
     } catch (error) {
       log(`SAVE_PROJECT error ${(error as Error).message}`);
+      throw error;
     }
   };
 
@@ -2981,10 +4089,310 @@ export default function App() {
     }
   };
 
+  const globalSaveProject = async () => {
+    if (!selectedProject) return;
+    setGlobalProjectBusy('save');
+    setOperationState({
+      active: true,
+      kind: 'save',
+      level: 'info',
+      title: `Saving ${selectedProject.name}`,
+      detail: 'Persisting the current project definition and graph overlays.',
+      phase: 'save'
+    });
+    try {
+      await saveProject(selectedProject);
+      pushActivity({
+        kind: 'save',
+        level: 'success',
+        title: `Saved ${selectedProject.name}`,
+        detail: 'Project metadata and graph draft were persisted.',
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      setOperationState({
+        active: false,
+        kind: 'save',
+        level: 'success',
+        title: 'Project saved',
+        detail: 'The current project state is on disk and available to build and flash flows.',
+        progress: 100,
+        phase: 'complete',
+        nextStep: 'Validate or build the selected profile.'
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pushActivity({
+        kind: 'save',
+        level: 'error',
+        title: `Save failed for ${selectedProject.name}`,
+        detail: message,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      setOperationState({
+        active: false,
+        kind: 'save',
+        level: 'error',
+        title: 'Save failed',
+        detail: message,
+        progress: 100,
+        phase: 'error',
+        nextStep: 'Retry saving after resolving the underlying issue.'
+      });
+    } finally {
+      setGlobalProjectBusy(null);
+    }
+  };
+
+  const globalValidateProject = async () => {
+    if (!selectedProject || selectedProject.status === 'draft_local_only') return;
+    setGlobalProjectBusy('validate');
+    setOperationState({
+      active: true,
+      kind: 'validate',
+      level: 'info',
+      title: `Validating ${selectedProject.name}`,
+      detail: 'Checking source/destination pin conflicts and project structure.',
+      phase: 'validation'
+    });
+    try {
+      const result = await api.validateProject(selectedProject.id);
+      pushActivity({
+        kind: 'validate',
+        level: result.ok ? 'success' : 'warning',
+        title: result.ok ? `Validation passed for ${selectedProject.name}` : `Validation review required for ${selectedProject.name}`,
+        detail: result.ok ? 'No blocking conflicts were found.' : `${result.errors.length} errors and ${result.warnings.length} warnings found.`,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      setOperationState({
+        active: false,
+        kind: 'validate',
+        level: result.ok ? 'success' : 'warning',
+        title: result.ok ? 'Validation complete' : 'Validation found issues',
+        detail: result.ok ? 'The project is structurally ready for build and flash.' : 'Review the validation details in the Projects workspace before production flashing.',
+        progress: 100,
+        phase: result.ok ? 'complete' : 'review_required',
+        nextStep: result.ok ? 'Build or flash the selected profile.' : 'Open Projects -> Validation for details.'
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pushActivity({
+        kind: 'validate',
+        level: 'error',
+        title: `Validation failed for ${selectedProject.name}`,
+        detail: message,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      setOperationState({
+        active: false,
+        kind: 'validate',
+        level: 'error',
+        title: 'Validation failed',
+        detail: message,
+        progress: 100,
+        phase: 'error',
+        nextStep: 'Retry validation after resolving the error.'
+      });
+    } finally {
+      setGlobalProjectBusy(null);
+    }
+  };
+
+  const globalBuildProject = async () => {
+    if (!selectedProject || selectedProject.status === 'draft_local_only') return;
+    setGlobalProjectBusy('build');
+    setOperationState({
+      active: true,
+      kind: 'build',
+      level: 'info',
+      title: `Building ${selectedProject.name}`,
+      detail: `Producing the ${selectedBuildProfile} firmware artifact set.`,
+      phase: 'build'
+    });
+    try {
+      const result = await api.buildProject(selectedProject.id, selectedBuildProfile);
+      log(`BUILD ${selectedProject.id}:${selectedBuildProfile} ${result.ok ? 'ok' : 'failed'}`);
+      pushActivity({
+        kind: 'build',
+        level: result.ok ? 'success' : 'error',
+        title: `${selectedProject.name} ${result.ok ? 'build complete' : 'build failed'}`,
+        detail: result.ok ? `${selectedBuildProfile} build artifacts are ready.` : result.error || 'Build returned a non-zero status.',
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      setOperationState({
+        active: false,
+        kind: 'build',
+        level: result.ok ? 'success' : 'error',
+        title: result.ok ? 'Build complete' : 'Build failed',
+        detail: result.ok ? 'The artifact set is ready for browser flash or inspection.' : result.error || 'Build returned a non-zero status.',
+        progress: 100,
+        phase: result.ok ? 'complete' : 'error',
+        nextStep: result.ok ? 'Flash in browser or inspect the Result tab in Projects.' : 'Inspect build output and retry.'
+      });
+    } catch (error) {
+      const message = (error as Error).message;
+      log(`BUILD error ${message}`);
+      pushActivity({
+        kind: 'build',
+        level: 'error',
+        title: `Build failed for ${selectedProject.name}`,
+        detail: message,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      setOperationState({
+        active: false,
+        kind: 'build',
+        level: 'error',
+        title: 'Build failed',
+        detail: message,
+        progress: 100,
+        phase: 'error',
+        nextStep: 'Inspect build output and retry.'
+      });
+    } finally {
+      setGlobalProjectBusy(null);
+    }
+  };
+
+  const confirmProductionFlash = async () => {
+    if (selectedBuildProfile !== 'production') return true;
+    return new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: 'Flash production firmware?',
+        icon: <WarningOutlined />,
+        content: 'Production flashing intentionally leaves the board in product mode and disconnects live lab tooling until a lab or telemetry build is flashed again.',
+        okText: 'Flash production',
+        okButtonProps: { danger: true },
+        cancelText: 'Cancel',
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false)
+      });
+    });
+  };
+
+  const globalBrowserFlash = async () => {
+    if (!selectedProject || selectedProject.status === 'draft_local_only' || !browserSerialSupported) return;
+    if (!(await confirmProductionFlash())) {
+      pushActivity({
+        kind: 'flash',
+        level: 'info',
+        title: 'Production flash canceled',
+        detail: 'The browser flash was canceled before serial ownership changed.',
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      return;
+    }
+    setGlobalProjectBusy('flash');
+    try {
+      const manifest = await api.flashManifest(selectedProject.id, selectedBuildProfile);
+      await runBrowserFlashSession({
+        manifest,
+        buildProfile: selectedBuildProfile,
+        releaseSerial: () => api.releaseSerial(),
+        reconnectSerial: () => api.reconnectSerial(),
+        onLog: (line) => {
+          if (line.trim()) log(`FLASH ${line}`);
+        },
+        onProgress: (progress) => {
+          setOperationState((current) => current ? { ...current, progress } : current);
+        },
+        onPhase: (phase, detail) => {
+          setOperationState({
+            active: !['complete', 'error'].includes(phase),
+            kind: 'flash',
+            level: phase === 'error' ? 'error' : phase === 'complete' ? 'success' : 'info',
+            title: `Flashing ${selectedProject.name}`,
+            detail: detail || 'Browser flash in progress.',
+            progress: phase === 'complete' ? 100 : undefined,
+            phase,
+            nextStep: phase === 'awaiting_port' ? 'Approve the Chrome/Edge serial prompt.' : phase === 'complete'
+              ? (selectedBuildProfile === 'production' ? 'Reflash lab firmware before using the monitor again.' : 'Return to Graph or Monitor.')
+              : undefined
+          });
+        }
+      });
+      log(`FLASH ${selectedProject.id}:${selectedBuildProfile} complete`);
+      pushActivity({
+        kind: 'flash',
+        level: 'success',
+        title: `Flashed ${selectedProject.name}`,
+        detail: `${selectedBuildProfile} image written successfully via browser flash.`,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      if (selectedBuildProfile !== 'production') {
+        const refreshed = await api.status();
+        setStatus(refreshed);
+      }
+    } catch (error) {
+      const message = (error as Error).message;
+      log(`FLASH error ${message}`);
+      pushActivity({
+        kind: 'flash',
+        level: 'error',
+        title: `Flash failed for ${selectedProject.name}`,
+        detail: message,
+        projectId: selectedProject.id,
+        buildProfile: selectedBuildProfile
+      });
+      setOperationState({
+        active: false,
+        kind: 'flash',
+        level: 'error',
+        title: 'Flash failed',
+        detail: message,
+        progress: 100,
+        phase: 'error',
+        nextStep: 'Inspect the operation log and browser-flash details, then retry.'
+      });
+    } finally {
+      setGlobalProjectBusy(null);
+      refresh();
+    }
+  };
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName || '';
+      const editing = target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName);
+      if (editing) return;
+      if (!(event.ctrlKey || event.metaKey)) return;
+
+      const key = event.key.toLowerCase();
+      if (key === 's') {
+        event.preventDefault();
+        globalSaveProject();
+        return;
+      }
+      if (key === 'b' && !event.shiftKey) {
+        event.preventDefault();
+        globalBuildProject();
+        return;
+      }
+      if (key === 'v' && event.shiftKey) {
+        event.preventDefault();
+        globalValidateProject();
+        return;
+      }
+      if (key === 'f' && event.shiftKey) {
+        event.preventDefault();
+        globalBrowserFlash();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [globalBrowserFlash, globalBuildProject, globalSaveProject, globalValidateProject]);
+
   const page = selected === 'dashboard' ? <DashboardPage profile={profile} status={status} blocks={blocks} destinationProfile={destinationProfile} selectedProject={selectedProject} /> :
-    selected === 'project' ? <ProjectPage profile={profile} status={status} blocks={blocks} projects={projects} selectedProject={selectedProject} selectedProjectId={selectedProjectId} onSelectProject={setSelectedProjectId} onCreateProject={createLocalProject} onSaveProject={saveProject} onDuplicateProject={duplicateProject} onDeleteProject={deleteProject} /> :
+    selected === 'project' ? <ProjectPage status={status} blocks={blocks} projects={projects} selectedProject={selectedProject} selectedProjectId={selectedProjectId} selectedBuildProfile={selectedBuildProfile} onSelectBuildProfile={setSelectedBuildProfile} onSelectProject={setSelectedProjectId} onCreateProject={createLocalProject} onSaveProject={saveProject} onDuplicateProject={duplicateProject} onDeleteProject={deleteProject} onProjectsChanged={replaceProjects} onOpenProject={(projectId, pageName = 'project') => { setSelectedProjectId(projectId); setSelected(pageName); }} onActivity={pushActivity} onOperationStateChange={setOperationState} /> :
     selected === 'graph' ? <GraphPage status={status} blocks={blocks} selectedProject={selectedProject} destinationProfile={destinationProfile} onProjectDraftChange={updateProjectDraft} onSaveProject={saveProject} /> :
-    selected === 'sdk' ? <SdkResearchPage onProjectsChanged={replaceProjects} onOpenProject={(projectId, pageName = 'project') => { setSelectedProjectId(projectId); setSelected(pageName); }} /> :
     selected === 'source' ? <SourcePage profile={profile} pins={pins} /> :
     selected === 'processing' ? <ProcessingPage profile={profile} /> :
     selected === 'destination' ? <DestinationPage destinationProfile={destinationProfile} sourcePins={pins} /> :
@@ -2997,6 +4405,23 @@ export default function App() {
     <Layout className="appShell">
       <Header className="appHeader">
         <HeaderStatus selectedProject={selectedProject} status={status} />
+        <GlobalProjectBar
+          projects={projects}
+          selectedProject={selectedProject}
+          selectedProjectId={selectedProjectId}
+          onSelectProject={setSelectedProjectId}
+          selectedBuildProfile={selectedBuildProfile}
+          onSelectBuildProfile={setSelectedBuildProfile}
+          onSave={globalSaveProject}
+          onValidate={globalValidateProject}
+          onBuild={globalBuildProject}
+          onFlash={globalBrowserFlash}
+          onOpenHistory={() => setHistoryOpen(true)}
+          busy={globalProjectBusy}
+          browserSerialSupported={browserSerialSupported}
+          operation={operationState}
+          latestHistory={operationHistory[0] || null}
+        />
       </Header>
       <Layout>
         <Sider width={220} className="appSider">
@@ -3009,6 +4434,27 @@ export default function App() {
         </Sider>
         <Content className="appContent">{page}</Content>
       </Layout>
+      <Modal
+        open={historyOpen}
+        title="Operation History"
+        footer={null}
+        onCancel={() => setHistoryOpen(false)}
+        width={760}
+      >
+        <Space direction="vertical" className="fullWidth" size="small">
+          {operationHistory.length === 0 ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No operations yet" />
+          ) : operationHistory.map((entry) => (
+            <Alert
+              key={entry.id}
+              type={entry.level}
+              showIcon
+              message={`${entry.title}${entry.buildProfile ? ` · ${entry.buildProfile}` : ''}`}
+              description={`${entry.timestamp}${entry.projectId ? ` · ${entry.projectId}` : ''} · ${entry.detail}`}
+            />
+          ))}
+        </Space>
+      </Modal>
     </Layout>
   );
 }

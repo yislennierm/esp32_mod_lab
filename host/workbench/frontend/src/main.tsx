@@ -11,15 +11,31 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         algorithm: theme.darkAlgorithm,
         token: {
           colorPrimary: '#4ea37b',
-          borderRadius: 6,
+          colorInfo: '#4a9eff',
+          colorWarning: '#faad14',
+          colorError: '#ff6b6b',
+          colorSuccess: '#4ea37b',
+          colorBgBase: '#0d1318',
+          colorTextBase: '#edf3f8',
+          borderRadius: 3,
+          borderRadiusLG: 3,
           fontFamily:
-            'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            '"IBM Plex Sans", "Aptos", "Segoe UI", ui-sans-serif, system-ui, sans-serif',
+          fontFamilyCode:
+            '"JetBrains Mono", "SFMono-Regular", ui-monospace, monospace'
         },
         components: {
           Layout: {
-            bodyBg: '#101418',
-            headerBg: '#111a21',
-            siderBg: '#121a21'
+            bodyBg: '#0d1318',
+            headerBg: '#0f171d',
+            siderBg: '#101920'
+          },
+          Card: {
+            headerHeightSM: 38
+          },
+          Menu: {
+            darkItemBg: '#101920',
+            darkSubMenuItemBg: '#101920'
           }
         }
       }}
