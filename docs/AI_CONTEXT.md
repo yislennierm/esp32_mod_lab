@@ -4,7 +4,7 @@ Purpose: compact current truth for Codex or another AI agent. Read this first, t
 
 Status: canonical and current. Keep this file short.
 
-Last updated: 2026-05-10.
+Last updated: 2026-05-11.
 
 ## Project
 
@@ -30,6 +30,7 @@ Current system method: source bus -> ESP32-P4 capture/processing -> destination,
 - UI direction: `docs/ant_design_ui_plan.md`
 - Firmware recovery: `docs/firmware_recovery_workflow.md`
 - Dual transport strategy: `docs/dual_transport_strategy.md`
+- Production firmware modes: `docs/production_modes.md`
 - Active source profile: `profiles/gbc_lcd.json`
 - GBC visual journey: `docs/gbc_lcd_journey.html`
 
@@ -51,7 +52,7 @@ Pixel bus:
 | Channel | Mapping |
 |---|---|
 | Red | R5 GPIO13, R4 GPIO14, R3 GPIO15, R2 GPIO16, R1 GPIO17, R0 GPIO18 |
-| Green | G5 GPIO7, G4 GPIO8, G3 GPIO9, G2 GPIO10, G1 GPIO11, G0 GPIO12 |
+| Green | G5 GPIO6, G4 GPIO5, G3 GPIO4, G2 GPIO10, G1 GPIO11, G0 GPIO12 |
 | Blue | B5 GPIO50, B4 GPIO48, B3 GPIO47, B2 GPIO46, B1 GPIO45, B0 GPIO36 |
 
 Do not reconnect `CLS` to GPIO32. GPIO32 is historical and was associated with power-cycle/backfeed trouble.
@@ -70,7 +71,7 @@ ESP32-P4 GPIO is not assumed 5V tolerant.
 - data mode: `RGB565`
 - programmed capture size: `192x145`
 - decoded stream model: row stride `161` samples, rows per period `145`
-- visible crop: `160x144`, `x=0`, `y=0`
+- visible crop: `160x144` after linear stream shift `-4` pixels
 - PCLK invert: `false`
 - DE level: `HIGH`
 - start marker: `SPS`
@@ -92,10 +93,49 @@ Build and flash scripts:
 - `scripts/stop_lab_processes.sh`
 - `scripts/build_probe_firmware.sh`
 - `scripts/flash_probe_firmware.sh <serial-port>`
+- `scripts/build_source_ring_bench.sh`
+- `scripts/flash_source_ring_bench.sh <serial-port>`
+- `scripts/build_production_mirror.sh`
+- `scripts/flash_production_mirror.sh <serial-port>`
 - `scripts/build_safe_recovery.sh`
 - `scripts/flash_safe_recovery.sh <serial-port>`
 
-Use native USB/JTAG/serial at `115200` for app control and the browser backend unless a faster path has just been proven. The known recovered native port on 2026-05-10 was `/dev/cu.usbmodem14301`. The WCH UART bridge at `/dev/cu.wchusbserial5A470211841` can reach the ESP32-P4 ROM bootloader and run `chip_id`, but it does not currently speak the probe JSON app protocol.
+Current normal lab firmware uses UART console/control at `115200` on the WCH bridge, currently `/dev/cu.wchusbserial5A470211841`. Native USB Serial/JTAG still enumerates on this board, but it did not answer the probe JSON protocol during the 2026-05-11 source-ring integration test, so do not assume it is the active app-control port.
+
+Hardware-block research rule:
+
+- Start risky or performance-critical ESP32-P4 block work in isolated firmware under `experiments/`.
+- Prove it with JSON counters/evidence before integrating into the lab UI or production firmware.
+- First implemented isolated app: `experiments/source_ring_bench/`.
+- `source_ring_bench` excludes lab protocol, browser stream, SPI LCD destination, TinyUSB, PNG rendering, and frame payload streaming.
+- Standalone experiment apps are not the default flash path on the active board after the PPA standalone app forced repeated manual recovery. Prefer adding no-I/O hardware-block benchmarks to the known-good lab firmware command path when that is sufficient.
+- PPA SRM lab command added in firmware source: `PPA_SRM_BENCH [frame_count]`. It uses synthetic `160x144 RGB565 -> 320x288 RGB565` buffers, compares PPA SRM against CPU 2x scaling, prints JSON, and does not touch GBC GPIO, SPI LCD, browser streaming, or frame payload transport. 2026-05-11 result: PPA `149.715 fps` / `6679.3 us`, CPU `80.510 fps` / `12420.8 us`, speedup `1.86x`, artifact `captures/benchmarks/ppa_srm/20260511T201252Z-ppa-srm-bench/`.
+- Host collector added: `python host/collect_ppa_srm_bench.py --port /dev/cu.wchusbserial5A470211841 --frames 120 --timeout-s 30 --echo`. It writes artifacts under `captures/benchmarks/ppa_srm/`.
+
+Early production mirror mode:
+
+- Build with `./scripts/build_production_mirror.sh`.
+- Flash with `./scripts/flash_production_mirror.sh /dev/cu.wchusbserial5A470211841`.
+- It does not run the browser/lab command server.
+- It boots directly into GBC source capture -> SPI LCD draw.
+- It applies no rotation, mirror, scaling, or geometry fix. Only RGB565 to RGB666 color conversion is performed.
+- Metrics appear on USB Serial/JTAG, currently `/dev/cu.usbmodem14401` in the latest run.
+- Initial known result from 2026-05-10: about `14.9 fps`, `avg_capture_us ~= 41953`, `avg_draw_us ~= 24986`, zero capture/draw failures in the sampled window.
+- Current best production result from 2026-05-10 after overlapping LCD_CAM capture with SPI drawing: about `29.86 fps`, `avg_capture_us ~= 23333`, `avg_draw_us ~= 25076`, zero dropped/capture/draw failures in the sampled window.
+- Experimental raw write-only SPI with `SPI_DEVICE_NO_DUMMY` was tested on the older `SCK=28`, `MOSI=31` wiring and disabled by default because it measured about `14.9 fps` with `avg_draw_us ~= 32511`.
+- Current known-good SPI LCD destination wiring is `CS=52`, `SDI/MOSI=31`, `SCK=28`, `RESET=29`, `D/C=53`.
+- This known-good SPI LCD wiring uses ESP-IDF GPIO-matrix routing. Do not set `SPICOMMON_BUSFLAG_IOMUX_PINS` with these pins.
+- 2026-05-11 PPA-backed production mode `PRODUCTION_MIRROR_MODE=3` was built and flashed through `/dev/cu.usbmodem14401`. It captures GBC RGB565, PPA-scales visible `160x144` to `320x288`, then draws through the known-good RGB666 SPI LCD path. Metrics with GBC powered on: about `5.97 fps`, `avg_capture_us ~= 41789`, `avg_crop_us ~= 1564`, `avg_ppa_us ~= 8222`, `avg_draw_us ~= 115619`, zero capture/PPA/draw failures. Interpretation: PPA integration works, but this synchronous 2x SPI LCD mode is draw-bandwidth limited and still uses the older synchronous source capture path.
+- 2026-05-11 PPA-backed production mode `PRODUCTION_MIRROR_MODE=4` measures 1x PPA pass-through. Valid build used `BUILD_DIR=build_production_mirror_m4`. Metrics: about `14.93 fps`, `avg_capture_us ~= 34768`, `avg_crop_us ~= 1453`, `avg_ppa_us ~= 5248`, `avg_draw_us ~= 25395`, zero failures. User visual feedback: glitchy pixels. Interpretation: PPA 1x costs about `5.25 ms` but is timing evidence only until image artifacts are isolated; skip it for pure unmodified 1x output. Production build/flash scripts now force `idf.py reconfigure` to avoid stale `PRODUCTION_MIRROR_MODE` cache.
+- 2026-05-11 production mode `PRODUCTION_MIRROR_MODE=5` is the correct source-ring + PPA + LCD test. It uses `lcdcam_raw_ring_capture_loop` at native visible `160x144 RGB565`, CPU copy-only frame handoff, PPA SRM 2x to `320x288`, then SPI LCD RGB666 draw. Metrics: `avg_capture_us ~= 16520`, `avg_copy_us ~= 3000`, `avg_ppa_us ~= 8650`, `avg_draw_us ~= 116166`, displayed about `8 fps`, captured about `60 fps`, many dropped frames because SPI draw is slower than source. JSON reports `"cpu_scaling":false` and `"source_path":"lcdcam_raw_ring_capture_loop"`. There is no CPU geometric scaling; destination still does RGB565-to-RGB666 color expansion for the current SPI panel.
+- 2026-05-11 production mode `PRODUCTION_MIRROR_MODE=6` is the 1x source-ring + PPA + LCD variant. It reports `production_mirror_ring_ppa_1x`, `"cpu_scaling":false`, and `"source_path":"lcdcam_raw_ring_capture_loop"`. Metrics: displayed about `32 fps`, captured about `60 fps`, `avg_capture_us ~= 16537`, `avg_copy_us ~= 3376`, `avg_ppa_us ~= 5716`, `avg_draw_us ~= 25392`, zero capture/PPA/draw failures. User should report whether the slow scrolling persists; if yes, debug ring frame/line phase next.
+- 2026-05-11 production mode `PRODUCTION_MIRROR_MODE=7` captures the solved stream geometry `161x145 RGB565`, copies the visible `160x144` region, runs PPA at `1.0x`, and draws through the known-good SPI LCD RGB666 path. It reports `production_mirror_ring_stream_ppa_1x`, `"cpu_scaling":false`, `"capture_width":161`, and `"visible_width":160`. Corrected metrics after padding DMA/cache-sync length: displayed about `32 fps`, captured about `60 fps`, `avg_capture_us ~= 16742`, `avg_copy_us ~= 3390`, `avg_ppa_us ~= 5544`, `avg_draw_us ~= 25370`, zero capture/PPA/draw failures. First mode-7 flash exposed `esp_cache_msync` alignment errors because `161x145x2` is not 64-byte aligned; `lcdcam_raw_ring_capture_loop` now pads the backing allocation/cache-sync length while keeping the true hardware byte count. If visual scrolling persists, debug continuous-ring start-of-frame/line phase next.
+- The SPI LCD destination has two useful MADCTL policies:
+  - `0x08`: source-straight diagnostic mode, BGR only, no orientation correction.
+  - `0xE8`: panel-corrected mode that made the GBC image visually upright on the SPI LCD. This costs no ESP32 per-pixel processing because the LCD controller performs the address scan transform.
+- Production defaults to panel-corrected `0xE8`; lab/source analysis should still treat the captured source buffer as factual and apply viewer transforms outside the source module.
+- ESP32-P4 normal SPI2 IO_MUX pins are `CLK=9`, `MOSI=8`, and `CS=7`. A 2026-05-11 experiment proved these pins can output clean 100 kHz SPI, but the LCD stayed white after the rewire. The old GPIO-matrix wiring was restored and color output returned only after removing the forced IO_MUX flag.
+- Full-rate GBC display on this RGB666 SPI LCD is still not expected at `20 MHz` because `160x144x3x59.7` requires about `33.0 Mbit/s` before overhead; any future destination bandwidth work must preserve the known-good old-pin baseline first.
 
 Current transport model:
 
@@ -126,7 +166,7 @@ Current GBC source-driver check:
 source /Users/nene/esp/v5.5/esp-idf/export.sh >/tmp/idf_export.log && python host/gbc_probe.py --port /dev/cu.usbmodem14301 --timeout 10 binary 'GBC_SOURCE_FRAME_BIN 300 RGB565 0 0' -o /tmp/gbc_source_frame.bin
 ```
 
-Expected current result: `binary_len=46690`, `payload_len=46690`, `data_mode=RGB565`, `width=192`, `height=145`, and a capture time around tens of milliseconds. If this command fails short by a few bytes, check the firmware binary write path and host stale-input recovery before changing capture timing.
+Expected current result: `binary_len=46690`, `payload_len=46690`, `data_mode=RGB565`, `width=192`, `height=145`, and a capture time around tens of milliseconds. The raw payload is the `161x145` source stream. Visible-frame consumers apply `src_pixel = y * 161 + x - 4` to produce `160x144`. If this command fails short by a few bytes, check the firmware binary write path and host stale-input recovery before changing capture timing.
 
 Current GBC batch source-driver benchmark:
 
@@ -166,6 +206,20 @@ TinyUSB experiment status:
 - Normal probe firmware was restored and `/dev/cu.usbmodem14301` answered `PING`.
 
 Current TinyUSB interpretation: code/build is not the blocker. The board's accessible USB-OTG path is not confirmed. Do not spend more time on TinyUSB CDC/vendor code until the exact board USB-OTG D+/D- routing is identified.
+
+Current isolated source-ring benchmark:
+
+- App: `experiments/source_ring_bench/`.
+- Build: `./scripts/build_source_ring_bench.sh`.
+- Flash: `./scripts/flash_source_ring_bench.sh /dev/cu.wchusbserial5A470211841`.
+- 2026-05-11 double-buffer rearm result at `192x145 RGB565`: `120/120`, no drops/errors, `completed_fps ~= 49.65`, `avg_capture_us ~= 19980`.
+- 2026-05-11 low-level cyclic LCD_CAM/GDMA ring result at `192x145 RGB565`: `120/120`, no drops/errors, `completed_fps ~= 50.09`, `avg_capture_us ~= 19967`.
+- 2026-05-11 low-level cyclic LCD_CAM/GDMA ring result at native visible `160x144 RGB565`: `120/120`, no drops/errors, `completed_fps ~= 60.53`, `avg_capture_us ~= 16520`, `target_rate_met=true`.
+- Interpretation: ESP32-P4 source ingress can sustain native visible-size GBC RGB565 payload rate in the isolated counters-only benchmark. The older `~50 fps` number was for the oversized `192x145` compatibility buffer (`55,680` bytes) instead of native visible `160x144` (`46,080` bytes). Next source work is turning the low-level ring into a production source frame ring and then validating image phase/line geometry, not more browser or SPI tuning.
+- Host-side evidence collector: `host/collect_source_ring_bench.py`.
+- Current evidence artifact: `captures/benchmarks/source_ring/20260511T184144Z-source-ring-bench/`, showing `60.532 fps`, `target_rate_met=True`, `drops=0`, and `dma_errors=0` for native visible `160x144`.
+- Normal lab firmware command added: `SOURCE_RING_LOWLEVEL_BENCH <frame_count> [timeout_ms] [width] [height] [RGB565] [pclk_invert] [frame_sync]`.
+- 2026-05-11 normal lab firmware result over WCH UART: `SOURCE_RING_LOWLEVEL_BENCH 120 300 160 144 RGB565 0 1` returned `completed_fps=60.532`, `target_rate_met=true`, `dropped_frames=0`, `dma_errors=0`, `ring_rearm_failures=0`, and `unknown_eof_desc=0`.
 
 Current internal pipeline proof commands:
 

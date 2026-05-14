@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -11,6 +12,8 @@
 #include "sdkconfig.h"
 
 #include "app_version.h"
+#include "destination_gpio_lab.h"
+#include "destination_spi_lcd.h"
 #include "diagnostics.h"
 #include "dvp_probe.h"
 #include "gbc_lcd_source.h"
@@ -18,6 +21,7 @@
 #include "lcdcam_raw.h"
 #include "pinmap_gbc.h"
 #include "pipeline_bench.h"
+#include "ppa_srm_bench.h"
 #include "source_pipeline_bench.h"
 #include "timing_analysis.h"
 
@@ -1543,6 +1547,268 @@ static void handle_gbc_rearm_bench(const char *line)
            (unsigned long)stats.checksum);
 }
 
+static void handle_source_ring_bench(const char *line)
+{
+    int chunk_count = 0;
+    int timeout_ms = GBC_LCD_SOURCE_DEFAULT_TIMEOUT_MS;
+    char data_mode_name[12] = "RGB565";
+    int pclk_invert = 0;
+    int frame_sync = 1;
+    int parsed = sscanf(line,
+                        "SOURCE_RING_BENCH %d %d %11s %d %d",
+                        &chunk_count,
+                        &timeout_ms,
+                        data_mode_name,
+                        &pclk_invert,
+                        &frame_sync);
+    if (parsed < 1 ||
+        chunk_count <= 0 ||
+        chunk_count > 512 ||
+        timeout_ms <= 0 ||
+        timeout_ms > 5000 ||
+        pclk_invert < 0 ||
+        pclk_invert > 1 ||
+        frame_sync < 0 ||
+        frame_sync > 1) {
+        diagnostics_record_unsupported_command();
+        printf("{\"ok\":false,\"command\":\"%s\",\"error\":\"invalid_arguments\","
+               "\"usage\":\"SOURCE_RING_BENCH <chunk_count_1_to_512> [timeout_ms] [RGB565] [pclk_invert_0_or_1] [frame_sync_0_or_1]\"}\n",
+               line);
+        return;
+    }
+
+    lcdcam_raw_data_mode_t data_mode = LCDCAM_RAW_DATA_RGB565;
+    if ((parsed >= 3 && !parse_lcdcam_raw_data_mode(data_mode_name, &data_mode)) ||
+        data_mode != LCDCAM_RAW_DATA_RGB565) {
+        printf("{\"ok\":false,\"command\":\"%s\",\"error\":\"invalid_data_mode\","
+               "\"allowed\":[\"RGB565\"],"
+               "\"reason\":\"source_ring_bench_tracks_the_current_solved_source_format_first\"}\n",
+               line);
+        return;
+    }
+
+    lcdcam_raw_start_mode_t start_mode = frame_sync != 0 ?
+                                         LCDCAM_RAW_START_AFTER_SPS_THEN_SPL_FALLING :
+                                         LCDCAM_RAW_START_AFTER_SPS_RISING;
+    lcdcam_raw_rearm_stats_t stats = {0};
+    esp_err_t err = lcdcam_raw_rearm_bench(LCDCAM_RAW_DE_HIGH,
+                                           GBC_LCD_SOURCE_CAPTURE_WIDTH,
+                                           GBC_LCD_SOURCE_CAPTURE_HEIGHT,
+                                           (uint32_t)timeout_ms,
+                                           false,
+                                           false,
+                                           pclk_invert != 0,
+                                           true,
+                                           start_mode,
+                                           false,
+                                           data_mode,
+                                           (uint32_t)chunk_count,
+                                           &stats);
+    double elapsed_s = (double)stats.elapsed_us / 1000000.0;
+    double completed_fps = elapsed_s > 0.0 ? (double)stats.completed_chunks / elapsed_s : 0.0;
+    double payload_mbytes_s = elapsed_s > 0.0 ?
+                              ((double)stats.completed_chunks * (double)stats.chunk_bytes) /
+                                  (elapsed_s * 1000000.0) :
+                              0.0;
+    const double target_source_fps = 59.73;
+    const double target_frame_us = 1000000.0 / target_source_fps;
+    double avg_capture_budget_pct = target_frame_us > 0.0 ?
+                                    ((double)stats.avg_chunk_us / target_frame_us) * 100.0 :
+                                    0.0;
+    bool target_rate_met = completed_fps >= (target_source_fps * 0.98) && stats.completed_chunks == stats.requested_chunks;
+
+    printf("{\"ok\":%s,\"command\":\"SOURCE_RING_BENCH\","
+           "\"schema\":\"esp32_mod_lab.benchmark.source_ring.v1\","
+           "\"source_profile\":\"gbc_lcd\","
+           "\"mode\":\"source_ingress_counters_only\","
+           "\"performance_path\":\"lcdcam_gdma_double_buffer_rearm\","
+           "\"next_performance_path\":\"persistent_continuous_descriptor_ring\","
+           "\"hot_path_excludes\":[\"browser_frame_stream\",\"spi_lcd_draw\",\"png_render\"],"
+           "\"requested_frames\":%lu,\"completed_frames\":%lu,"
+           "\"dropped_frames\":0,\"partial_frames\":%lu,\"sync_loss_count\":%lu,"
+           "\"dma_errors\":%lu,\"ring_slots\":2,\"ring_high_water_mark\":1,"
+           "\"data_mode\":\"%s\",\"capture_width\":%lu,\"capture_height\":%lu,"
+           "\"bytes_per_sample\":%lu,\"frame_bytes\":%lu,"
+           "\"timeout_ms\":%lu,\"pclk_invert\":%s,"
+           "\"start_trigger\":\"%s\",\"start_trigger_seen\":%s,"
+           "\"target_source_fps\":%.3f,\"target_frame_us\":%.1f,"
+           "\"target_rate_met\":%s,\"avg_capture_budget_pct\":%.1f,"
+           "\"elapsed_us\":%lld,\"completed_fps\":%.3f,"
+           "\"payload_mbytes_per_s\":%.3f,"
+           "\"first_frame_us\":%lld,\"avg_capture_us\":%lld,"
+           "\"max_capture_us\":%lld,\"failure_stage\":\"%s\","
+           "\"last_esp_err\":%d,\"run_esp_err\":%d,\"checksum\":%lu}\n",
+           err == ESP_OK ? "true" : "false",
+           (unsigned long)stats.requested_chunks,
+           (unsigned long)stats.completed_chunks,
+           (unsigned long)(stats.requested_chunks - stats.completed_chunks),
+           stats.start_trigger_seen ? 0UL : 1UL,
+           (unsigned long)stats.failed_rearms,
+           lcdcam_raw_data_mode_name(stats.data_mode),
+           (unsigned long)stats.h_res,
+           (unsigned long)stats.v_res,
+           (unsigned long)stats.bytes_per_sample,
+           (unsigned long)stats.chunk_bytes,
+           (unsigned long)stats.timeout_ms,
+           pclk_invert != 0 ? "true" : "false",
+           frame_sync != 0 ? "SPS_RISING_THEN_SPL_FALLING" : "SPS_RISING",
+           stats.start_trigger_seen ? "true" : "false",
+           target_source_fps,
+           target_frame_us,
+           target_rate_met ? "true" : "false",
+           avg_capture_budget_pct,
+           (long long)stats.elapsed_us,
+           completed_fps,
+           payload_mbytes_s,
+           (long long)stats.first_chunk_us,
+           (long long)stats.avg_chunk_us,
+           (long long)stats.max_chunk_us,
+           stats.failure_stage == NULL ? "unknown" : stats.failure_stage,
+           stats.last_esp_err,
+           err,
+           (unsigned long)stats.checksum);
+}
+
+static void handle_source_ring_lowlevel_bench(const char *line)
+{
+    int frame_count = 0;
+    int timeout_ms = GBC_LCD_SOURCE_DEFAULT_TIMEOUT_MS;
+    int width = GBC_LCD_SOURCE_VISIBLE_WIDTH;
+    int height = GBC_LCD_SOURCE_VISIBLE_HEIGHT;
+    char data_mode_name[12] = "RGB565";
+    int pclk_invert = 0;
+    int frame_sync = 1;
+    int parsed = sscanf(line,
+                        "SOURCE_RING_LOWLEVEL_BENCH %d %d %d %d %11s %d %d",
+                        &frame_count,
+                        &timeout_ms,
+                        &width,
+                        &height,
+                        data_mode_name,
+                        &pclk_invert,
+                        &frame_sync);
+    if (parsed < 1 ||
+        frame_count <= 0 ||
+        frame_count > 512 ||
+        timeout_ms <= 0 ||
+        timeout_ms > 5000 ||
+        width <= 0 ||
+        width > 512 ||
+        height <= 0 ||
+        height > 512 ||
+        pclk_invert < 0 ||
+        pclk_invert > 1 ||
+        frame_sync < 0 ||
+        frame_sync > 1) {
+        diagnostics_record_unsupported_command();
+        printf("{\"ok\":false,\"command\":\"%s\",\"error\":\"invalid_arguments\","
+               "\"usage\":\"SOURCE_RING_LOWLEVEL_BENCH <frame_count_1_to_512> [timeout_ms] [width] [height] [RGB565] [pclk_invert_0_or_1] [frame_sync_0_or_1]\"}\n",
+               line);
+        return;
+    }
+
+    lcdcam_raw_data_mode_t data_mode = LCDCAM_RAW_DATA_RGB565;
+    if ((parsed >= 5 && !parse_lcdcam_raw_data_mode(data_mode_name, &data_mode)) ||
+        data_mode != LCDCAM_RAW_DATA_RGB565) {
+        printf("{\"ok\":false,\"command\":\"%s\",\"error\":\"invalid_data_mode\","
+               "\"allowed\":[\"RGB565\"],"
+               "\"reason\":\"source_ring_lowlevel_bench_tracks_the_current_solved_source_format_first\"}\n",
+               line);
+        return;
+    }
+
+    lcdcam_raw_start_mode_t start_mode = frame_sync != 0 ?
+                                         LCDCAM_RAW_START_AFTER_SPS_THEN_SPL_FALLING :
+                                         LCDCAM_RAW_START_AFTER_SPS_RISING;
+    lcdcam_raw_ring_stats_t stats = {0};
+    esp_err_t err = lcdcam_raw_ring_bench(LCDCAM_RAW_DE_HIGH,
+                                          (uint32_t)width,
+                                          (uint32_t)height,
+                                          (uint32_t)timeout_ms,
+                                          false,
+                                          false,
+                                          pclk_invert != 0,
+                                          true,
+                                          start_mode,
+                                          false,
+                                          data_mode,
+                                          (uint32_t)frame_count,
+                                          &stats);
+    double elapsed_s = (double)stats.elapsed_us / 1000000.0;
+    double completed_fps = elapsed_s > 0.0 ? (double)stats.completed_frames / elapsed_s : 0.0;
+    double payload_mbytes_s = elapsed_s > 0.0 ?
+                              ((double)stats.completed_frames * (double)stats.frame_bytes) /
+                                  (elapsed_s * 1000000.0) :
+                              0.0;
+    const double target_source_fps = 59.73;
+    const double target_frame_us = 1000000.0 / target_source_fps;
+    double avg_capture_budget_pct = target_frame_us > 0.0 ?
+                                    ((double)stats.avg_frame_interval_us / target_frame_us) * 100.0 :
+                                    0.0;
+    bool target_rate_met = completed_fps >= (target_source_fps * 0.98) &&
+                           stats.completed_frames == stats.requested_frames &&
+                           stats.ring_rearm_failures == 0 &&
+                           stats.unknown_eof_desc == 0;
+
+    printf("{\"ok\":%s,\"command\":\"SOURCE_RING_LOWLEVEL_BENCH\","
+           "\"schema\":\"esp32_mod_lab.benchmark.source_ring.v1\","
+           "\"source_profile\":\"gbc_lcd\","
+           "\"mode\":\"source_ingress_counters_only\","
+           "\"performance_path\":\"low_level_cyclic_lcdcam_gdma_descriptor_ring\","
+           "\"next_performance_path\":\"production_source_frame_ring\","
+           "\"hot_path_excludes\":[\"browser_frame_stream\",\"spi_lcd_draw\",\"png_render\"],"
+           "\"requested_frames\":%lu,\"completed_frames\":%lu,"
+           "\"dropped_frames\":0,\"partial_frames\":%lu,\"sync_loss_count\":%lu,"
+           "\"dma_errors\":%lu,\"ring_slots\":%lu,"
+           "\"descriptor_count_per_slot\":%lu,\"ring_rearms\":%lu,"
+           "\"ring_rearm_failures\":%lu,\"unknown_eof_desc\":%lu,"
+           "\"data_mode\":\"%s\",\"capture_width\":%lu,\"capture_height\":%lu,"
+           "\"bytes_per_sample\":%lu,\"frame_bytes\":%lu,"
+           "\"timeout_ms\":%lu,\"pclk_invert\":%s,"
+           "\"start_trigger\":\"%s\",\"start_trigger_seen\":%s,"
+           "\"target_source_fps\":%.3f,\"target_frame_us\":%.1f,"
+           "\"target_rate_met\":%s,\"avg_capture_budget_pct\":%.1f,"
+           "\"elapsed_us\":%lld,\"completed_fps\":%.3f,"
+           "\"payload_mbytes_per_s\":%.3f,"
+           "\"first_frame_us\":%lld,\"avg_capture_us\":%lld,"
+           "\"max_capture_us\":%lld,\"failure_stage\":\"%s\","
+           "\"last_esp_err\":%d,\"run_esp_err\":%d,\"checksum\":%lu}\n",
+           err == ESP_OK ? "true" : "false",
+           (unsigned long)stats.requested_frames,
+           (unsigned long)stats.completed_frames,
+           (unsigned long)(stats.requested_frames - stats.completed_frames),
+           stats.start_trigger_seen ? 0UL : 1UL,
+           (unsigned long)stats.ring_rearm_failures,
+           (unsigned long)stats.ring_slots,
+           (unsigned long)stats.descriptor_count_per_slot,
+           (unsigned long)stats.ring_rearms,
+           (unsigned long)stats.ring_rearm_failures,
+           (unsigned long)stats.unknown_eof_desc,
+           lcdcam_raw_data_mode_name(stats.data_mode),
+           (unsigned long)stats.h_res,
+           (unsigned long)stats.v_res,
+           (unsigned long)stats.bytes_per_sample,
+           (unsigned long)stats.frame_bytes,
+           (unsigned long)stats.timeout_ms,
+           pclk_invert != 0 ? "true" : "false",
+           frame_sync != 0 ? "SPS_RISING_THEN_SPL_FALLING" : "SPS_RISING",
+           stats.start_trigger_seen ? "true" : "false",
+           target_source_fps,
+           target_frame_us,
+           target_rate_met ? "true" : "false",
+           avg_capture_budget_pct,
+           (long long)stats.elapsed_us,
+           completed_fps,
+           payload_mbytes_s,
+           (long long)stats.first_frame_us,
+           (long long)stats.avg_frame_interval_us,
+           (long long)stats.max_frame_interval_us,
+           stats.failure_stage == NULL ? "unknown" : stats.failure_stage,
+           stats.last_esp_err,
+           err,
+           (unsigned long)stats.checksum);
+}
+
 static void write_u32_le(uint8_t *dst, uint32_t value)
 {
     dst[0] = (uint8_t)(value & 0xffU);
@@ -1752,7 +2018,7 @@ static void handle_lcdcam_raw_capture(const char *line)
         v_res <= 0 || v_res > 240) {
         diagnostics_record_unsupported_command();
         printf("{\"ok\":false,\"command\":\"%s\",\"error\":\"invalid_arguments\","
-               "\"usage\":\"LCDCAM_RAW_CAPTURE <SPL|LP|HIGH> <timeout_ms_1_to_5000> [vsync_invert_0_or_1] [de_invert_0_or_1] [pclk_invert_0_or_1] [byte_count_eof_0_or_1] [h_res_1_to_320] [v_res_1_to_240] [start_mode_0_immediate_1_after_sps_2_after_sps_spl] [vh_de_mode_0_or_1] [RG44|RGB332|RGB664|RGB565]\"}\n",
+               "\"usage\":\"LCDCAM_RAW_CAPTURE <SPL|LP|HIGH> <timeout_ms_1_to_5000> [vsync_invert_0_or_1] [de_invert_0_or_1] [pclk_invert_0_or_1] [byte_count_eof_0_or_1] [h_res_1_to_320] [v_res_1_to_240] [start_mode_0_immediate_1_after_sps_2_after_sps_spl_3_after_sps_falling] [vh_de_mode_0_or_1] [RG44|RGB332|RGB664|RGB565]\"}\n",
                line);
         return;
     }
@@ -1761,7 +2027,7 @@ static void handle_lcdcam_raw_capture(const char *line)
         (pclk_invert != 0 && pclk_invert != 1) ||
         (byte_count_eof != 0 && byte_count_eof != 1) ||
         (vh_de_mode != 0 && vh_de_mode != 1) ||
-        start_mode_arg < 0 || start_mode_arg > 2) {
+        start_mode_arg < 0 || start_mode_arg > 3) {
         diagnostics_record_unsupported_command();
         printf("{\"ok\":false,\"command\":\"%s\",\"error\":\"invalid_boolean_argument\"}\n", line);
         return;
@@ -1844,7 +2110,7 @@ static void handle_lcdcam_raw_capture_bin(const char *line)
         emit_len < 0 || emit_len > (h_res * v_res * 2)) {
         diagnostics_record_unsupported_command();
         printf("{\"ok\":false,\"command\":\"%s\",\"error\":\"invalid_arguments\","
-               "\"usage\":\"LCDCAM_RAW_CAPTURE_BIN <SPL|LP|HIGH> <timeout_ms_1_to_5000> [vsync_invert_0_or_1] [de_invert_0_or_1] [pclk_invert_0_or_1] [byte_count_eof_0_or_1] [h_res_1_to_320] [v_res_1_to_240] [start_mode_0_immediate_1_after_sps_2_after_sps_spl] [vh_de_mode_0_or_1] [RG44|RGB332|RGB664|RGB565]\"}\n",
+               "\"usage\":\"LCDCAM_RAW_CAPTURE_BIN <SPL|LP|HIGH> <timeout_ms_1_to_5000> [vsync_invert_0_or_1] [de_invert_0_or_1] [pclk_invert_0_or_1] [byte_count_eof_0_or_1] [h_res_1_to_320] [v_res_1_to_240] [start_mode_0_immediate_1_after_sps_2_after_sps_spl_3_after_sps_falling] [vh_de_mode_0_or_1] [RG44|RGB332|RGB664|RGB565]\"}\n",
                line);
         return;
     }
@@ -1853,7 +2119,7 @@ static void handle_lcdcam_raw_capture_bin(const char *line)
         (pclk_invert != 0 && pclk_invert != 1) ||
         (byte_count_eof != 0 && byte_count_eof != 1) ||
         (vh_de_mode != 0 && vh_de_mode != 1) ||
-        start_mode_arg < 0 || start_mode_arg > 2) {
+        start_mode_arg < 0 || start_mode_arg > 3) {
         diagnostics_record_unsupported_command();
         printf("{\"ok\":false,\"command\":\"%s\",\"error\":\"invalid_boolean_argument\",\"binary_len\":0}\n", line);
         return;
@@ -2003,10 +2269,12 @@ static void handle_gbc_source_status(void)
            "\"capture_width\":%lu,\"capture_height\":%lu,"
            "\"stream_width\":%lu,\"stream_height\":%lu,"
            "\"visible_width\":%lu,\"visible_height\":%lu,"
+           "\"visible_linear_shift_pixels\":%ld,"
            "\"default_timeout_ms\":%lu,"
            "\"default_data_mode\":\"%s\","
            "\"default_emit_len\":%lu,"
            "\"emit_len_rgb565\":%lu,"
+           "\"visible_len_rgb565\":%lu,"
            "\"pclk_invert\":%s,"
            "\"transport_data_plane\":\"native_usb_serial_jtag\","
            "\"recovery_plane\":\"wch_uart_rom\"}\n",
@@ -2016,11 +2284,34 @@ static void handle_gbc_source_status(void)
            (unsigned long)status.stream_height,
            (unsigned long)status.visible_width,
            (unsigned long)status.visible_height,
+           (long)status.visible_linear_shift_pixels,
            (unsigned long)status.default_timeout_ms,
            lcdcam_raw_data_mode_name(status.default_data_mode),
            (unsigned long)gbc_lcd_source_emit_len(status.default_data_mode),
            (unsigned long)status.emit_len_rgb565,
+           (unsigned long)status.visible_len_rgb565,
            status.pclk_invert ? "true" : "false");
+}
+
+static esp_err_t draw_gbc_source_visible_frame(const lcdcam_raw_result_t *result, bool clear_before_draw)
+{
+    if (result == NULL || result->buffer == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (clear_before_draw) {
+        return destination_spi_lcd_draw_gbc_rgb565_1x_shifted(result->buffer,
+                                                             result->received_size,
+                                                             GBC_LCD_SOURCE_STREAM_WIDTH,
+                                                             GBC_LCD_SOURCE_VISIBLE_WIDTH,
+                                                             GBC_LCD_SOURCE_VISIBLE_HEIGHT,
+                                                             GBC_LCD_SOURCE_VISIBLE_LINEAR_SHIFT_PIXELS);
+    }
+    return destination_spi_lcd_draw_gbc_rgb565_1x_shifted_no_clear(result->buffer,
+                                                                  result->received_size,
+                                                                  GBC_LCD_SOURCE_STREAM_WIDTH,
+                                                                  GBC_LCD_SOURCE_VISIBLE_WIDTH,
+                                                                  GBC_LCD_SOURCE_VISIBLE_HEIGHT,
+                                                                  GBC_LCD_SOURCE_VISIBLE_LINEAR_SHIFT_PIXELS);
 }
 
 static void handle_gbc_source_frame_bin(const char *line)
@@ -2083,6 +2374,148 @@ static void handle_gbc_source_frame_bin(const char *line)
                                    (uint32_t)emit_len,
                                    capture_us);
     lcdcam_raw_result_free(&result);
+}
+
+static void handle_dest_spi_lcd_show_gbc_frame(const char *line)
+{
+    int timeout_ms = GBC_LCD_SOURCE_DEFAULT_TIMEOUT_MS;
+    int pclk_invert = 0;
+    int parsed = sscanf(line, "DEST_SPI_LCD_SHOW_GBC_FRAME %d %d", &timeout_ms, &pclk_invert);
+    if (parsed == EOF) {
+        parsed = 0;
+    }
+    if (parsed < 0 ||
+        timeout_ms <= 0 ||
+        timeout_ms > 5000 ||
+        (pclk_invert != 0 && pclk_invert != 1)) {
+        diagnostics_record_unsupported_command();
+        printf("{\"ok\":false,\"command\":\"%s\",\"error\":\"invalid_arguments\","
+               "\"usage\":\"DEST_SPI_LCD_SHOW_GBC_FRAME [timeout_ms_1_to_5000] [pclk_invert_0_or_1]\"}\n",
+               line);
+        return;
+    }
+
+    lcdcam_raw_result_t result = {0};
+    int64_t capture_us = 0;
+    int64_t draw_start_us = 0;
+    int64_t draw_us = 0;
+    esp_err_t capture_err = gbc_lcd_source_capture_frame((uint32_t)timeout_ms,
+                                                         LCDCAM_RAW_DATA_RGB565,
+                                                         pclk_invert != 0,
+                                                         &result,
+                                                         &capture_us);
+    esp_err_t draw_err = ESP_OK;
+    if (capture_err == ESP_OK) {
+        draw_start_us = esp_timer_get_time();
+        draw_err = draw_gbc_source_visible_frame(&result, true);
+        draw_us = esp_timer_get_time() - draw_start_us;
+    }
+
+    const bool ok = capture_err == ESP_OK && draw_err == ESP_OK;
+    printf("{\"ok\":%s,\"command\":\"DEST_SPI_LCD_SHOW_GBC_FRAME\","
+           "\"capture_error\":\"%s\",\"capture_err\":%d,"
+           "\"draw_error\":\"%s\",\"draw_err\":%d,"
+           "\"source\":{\"width\":%u,\"height\":%u,\"stream_width\":%u,\"visible_shift_pixels\":%d,\"format\":\"RGB565\"},"
+           "\"destination\":{\"width\":320,\"height\":480,\"format\":\"RGB666\",\"scale\":1,\"x\":80,\"y\":168},"
+           "\"received_size\":%u,\"capture_us\":%lld,\"draw_us\":%lld}\n",
+           ok ? "true" : "false",
+           capture_err == ESP_OK ? "none" : esp_err_to_name(capture_err),
+           capture_err,
+           draw_err == ESP_OK ? "none" : esp_err_to_name(draw_err),
+           draw_err,
+           (unsigned)GBC_LCD_SOURCE_VISIBLE_WIDTH,
+           (unsigned)GBC_LCD_SOURCE_VISIBLE_HEIGHT,
+           (unsigned)GBC_LCD_SOURCE_STREAM_WIDTH,
+           (int)GBC_LCD_SOURCE_VISIBLE_LINEAR_SHIFT_PIXELS,
+           (unsigned)result.received_size,
+           (long long)capture_us,
+           (long long)draw_us);
+    lcdcam_raw_result_free(&result);
+}
+
+static void handle_dest_spi_lcd_mirror_bench(const char *line)
+{
+    int frame_count = 10;
+    int timeout_ms = GBC_LCD_SOURCE_DEFAULT_TIMEOUT_MS;
+    int pclk_invert = 0;
+    int parsed = sscanf(line, "DEST_SPI_LCD_MIRROR_BENCH %d %d %d", &frame_count, &timeout_ms, &pclk_invert);
+    if (parsed == EOF) {
+        parsed = 0;
+    }
+    if (parsed < 0 ||
+        frame_count <= 0 ||
+        frame_count > 120 ||
+        timeout_ms <= 0 ||
+        timeout_ms > 5000 ||
+        (pclk_invert != 0 && pclk_invert != 1)) {
+        diagnostics_record_unsupported_command();
+        printf("{\"ok\":false,\"command\":\"%s\",\"error\":\"invalid_arguments\","
+               "\"usage\":\"DEST_SPI_LCD_MIRROR_BENCH [frames_1_to_120] [timeout_ms_1_to_5000] [pclk_invert_0_or_1]\"}\n",
+               line);
+        return;
+    }
+
+    int64_t start_us = esp_timer_get_time();
+    int64_t total_capture_us = 0;
+    int64_t total_draw_us = 0;
+    int64_t max_capture_us = 0;
+    int64_t max_draw_us = 0;
+    int completed = 0;
+    esp_err_t capture_err = ESP_OK;
+    esp_err_t draw_err = ESP_OK;
+    for (int frame = 0; frame < frame_count; ++frame) {
+        lcdcam_raw_result_t result = {0};
+        int64_t capture_us = 0;
+        capture_err = gbc_lcd_source_capture_frame((uint32_t)timeout_ms,
+                                                   LCDCAM_RAW_DATA_RGB565,
+                                                   pclk_invert != 0,
+                                                   &result,
+                                                   &capture_us);
+        if (capture_err != ESP_OK) {
+            lcdcam_raw_result_free(&result);
+            break;
+        }
+        int64_t draw_start_us = esp_timer_get_time();
+        draw_err = draw_gbc_source_visible_frame(&result, false);
+        int64_t draw_us = esp_timer_get_time() - draw_start_us;
+        lcdcam_raw_result_free(&result);
+        if (draw_err != ESP_OK) {
+            break;
+        }
+        total_capture_us += capture_us;
+        total_draw_us += draw_us;
+        if (capture_us > max_capture_us) {
+            max_capture_us = capture_us;
+        }
+        if (draw_us > max_draw_us) {
+            max_draw_us = draw_us;
+        }
+        ++completed;
+    }
+
+    int64_t elapsed_us = esp_timer_get_time() - start_us;
+    const bool ok = completed == frame_count && capture_err == ESP_OK && draw_err == ESP_OK;
+    printf("{\"ok\":%s,\"command\":\"DEST_SPI_LCD_MIRROR_BENCH\","
+           "\"requested_frames\":%d,\"completed_frames\":%d,"
+           "\"capture_error\":\"%s\",\"capture_err\":%d,"
+           "\"draw_error\":\"%s\",\"draw_err\":%d,"
+           "\"elapsed_us\":%lld,\"fps_x1000\":%lld,"
+           "\"avg_capture_us\":%lld,\"avg_draw_us\":%lld,"
+           "\"max_capture_us\":%lld,\"max_draw_us\":%lld,"
+           "\"destination\":{\"width\":320,\"height\":480,\"format\":\"RGB666\",\"scale\":1,\"clear_per_frame\":false}}\n",
+           ok ? "true" : "false",
+           frame_count,
+           completed,
+           capture_err == ESP_OK ? "none" : esp_err_to_name(capture_err),
+           capture_err,
+           draw_err == ESP_OK ? "none" : esp_err_to_name(draw_err),
+           draw_err,
+           (long long)elapsed_us,
+           elapsed_us > 0 ? (long long)(((int64_t)completed * 1000000000LL) / elapsed_us) : 0LL,
+           completed > 0 ? (long long)(total_capture_us / completed) : 0LL,
+           completed > 0 ? (long long)(total_draw_us / completed) : 0LL,
+           (long long)max_capture_us,
+           (long long)max_draw_us);
 }
 
 static void handle_gbc_source_stream_bin(const char *line)
@@ -2156,6 +2589,7 @@ static void handle_gbc_source_stream_bin(const char *line)
 
 static void handle_safe_idle(void)
 {
+    destination_gpio_lab_release_all();
     esp_err_t err = lcdcam_raw_enter_safe_idle();
     printf("{\"ok\":%s,\"command\":\"SAFE_IDLE\",\"error\":\"%s\",\"err\":%d,"
            "\"mode\":\"lcdcam_detached_gpio_floating_input\"}\n",
@@ -2166,6 +2600,7 @@ static void handle_safe_idle(void)
 
 static void handle_electrical_isolate(void)
 {
+    destination_gpio_lab_release_all();
     esp_err_t err = lcdcam_raw_enter_electrical_isolate();
     printf("{\"ok\":%s,\"command\":\"ELECTRICAL_ISOLATE\",\"error\":\"%s\",\"err\":%d,"
            "\"mode\":\"lcdcam_detached_gpio_disabled_no_pulls\","
@@ -2525,6 +2960,102 @@ static void handle_command(const char *line)
         return;
     }
 
+    if (strcmp(line, "DEST_GPIO_STATUS") == 0) {
+        destination_gpio_lab_print_status();
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_GPIO_VALIDATE")) {
+        destination_gpio_lab_handle_validate(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_GPIO_CLAIM")) {
+        destination_gpio_lab_handle_claim(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_GPIO_SET")) {
+        destination_gpio_lab_handle_set(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_GPIO_PULSE")) {
+        destination_gpio_lab_handle_pulse(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_GPIO_RELEASE_ALL")) {
+        destination_gpio_lab_release_all();
+        printf("{\"ok\":true,\"command\":\"DEST_GPIO_RELEASE_ALL\"}\n");
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_GPIO_RELEASE")) {
+        destination_gpio_lab_handle_release(line);
+        return;
+    }
+
+    if (strcmp(line, "DEST_SPI_LCD_STATUS") == 0) {
+        destination_spi_lcd_handle_status();
+        return;
+    }
+
+    if (strcmp(line, "DEST_SPI_LCD_INIT") == 0) {
+        destination_spi_lcd_handle_init();
+        return;
+    }
+
+    if (strcmp(line, "DEST_SPI_LCD_SAFE_OFF") == 0) {
+        destination_spi_lcd_handle_safe_off();
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_SPI_LCD_CLEAR565BE")) {
+        destination_spi_lcd_handle_clear565be(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_SPI_LCD_CLEAR666")) {
+        destination_spi_lcd_handle_clear666(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_SPI_LCD_CLEAR")) {
+        destination_spi_lcd_handle_clear(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_SPI_LCD_TEST_PATTERN565")) {
+        destination_spi_lcd_handle_test_pattern565(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_SPI_LCD_TEST_PATTERN")) {
+        destination_spi_lcd_handle_test_pattern(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_SPI_LCD_SET_MADCTL")) {
+        destination_spi_lcd_handle_set_madctl(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_SPI_LCD_SHOW_GBC_FRAME")) {
+        handle_dest_spi_lcd_show_gbc_frame(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_SPI_LCD_MIRROR_BENCH")) {
+        handle_dest_spi_lcd_mirror_bench(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "DEST_SPI_LCD_SIGNAL_BURST")) {
+        destination_spi_lcd_handle_signal_burst(line);
+        return;
+    }
+
     if (command_has_prefix(line, "USB_BENCH_STREAM_BIN")) {
         handle_usb_bench_stream_bin(line);
         return;
@@ -2542,6 +3073,9 @@ static void handle_command(const char *line)
         command_has_prefix(line, "GBC_SOURCE_BENCH") ||
         command_has_prefix(line, "GBC_PIPELINE_BENCH") ||
         command_has_prefix(line, "GBC_PIPELINE_BENCH_PERSIST") ||
+        command_has_prefix(line, "PPA_SRM_BENCH") ||
+        command_has_prefix(line, "SOURCE_RING_BENCH") ||
+        command_has_prefix(line, "SOURCE_RING_LOWLEVEL_BENCH") ||
         command_has_prefix(line, "GBC_REARM_BENCH") ||
         command_has_prefix(line, "GBC_FRAME_REARM_BENCH") ||
         command_has_prefix(line, "GBC_CAPCARD_STREAM_BIN") ||
@@ -2561,6 +3095,11 @@ static void handle_command(const char *line)
     }
 #endif
 
+    if (command_has_prefix(line, "PPA_SRM_BENCH")) {
+        ppa_srm_bench_handle_command(line);
+        return;
+    }
+
     if (command_has_prefix(line, "GBC_SOURCE_FRAME_BIN")) {
         handle_gbc_source_frame_bin(line);
         return;
@@ -2579,6 +3118,16 @@ static void handle_command(const char *line)
     if (command_has_prefix(line, "GBC_PIPELINE_BENCH") ||
         command_has_prefix(line, "GBC_PIPELINE_BENCH_PERSIST")) {
         handle_gbc_pipeline_bench(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "SOURCE_RING_BENCH")) {
+        handle_source_ring_bench(line);
+        return;
+    }
+
+    if (command_has_prefix(line, "SOURCE_RING_LOWLEVEL_BENCH")) {
+        handle_source_ring_lowlevel_bench(line);
         return;
     }
 

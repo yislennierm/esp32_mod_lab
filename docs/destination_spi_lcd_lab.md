@@ -2,7 +2,7 @@
 
 Purpose: define the first destination-output research module for SPI-connected LCD/IPS panels.
 
-Status: draft architecture contract. Disabled-by-default; no firmware pin drive is implied until wiring and panel controller are confirmed.
+Status: early lab implementation. Destination GPIO validation, manual output claims, and a first generic MIPI-DCS SPI panel path exist.
 
 Last updated: 2026-05-10.
 
@@ -32,7 +32,7 @@ The panel connector described by the user is:
 
 ## 2. Current Understanding
 
-Current hypothesis: the panel is a controller-based SPI LCD, likely compatible with a common controller family such as ST7789, ST7735, ILI9341, GC9A01, or similar. The exact controller is not yet verified.
+Current hypothesis: the panel is a controller-based SPI LCD, likely ST7796S or ILI9486 based on the user's module identification. The first firmware path uses generic MIPI-DCS commands over SPI rather than an ST7789-specific driver.
 
 Evidence:
 
@@ -40,7 +40,7 @@ Evidence:
 - Separate `LED` power suggests a backlight-driven TFT/IPS module rather than a raw RGB panel.
 - ESP-IDF supports SPI LCD panel IO through `esp_lcd_new_panel_io_spi()` and DMA-capable SPI bus setup.
 
-Confidence level: medium that this is a controller-based SPI LCD; low for controller type, resolution, color order, reset/init sequence, maximum SPI clock, and required command set.
+Confidence level: medium that this is a controller-based 320x480 SPI LCD; medium-low for ST7796S vs ILI9486, reset/init sequence, and maximum SPI clock. Color order is currently understood as BGR. RGB666/18-bit is the working pixel transfer mode; RGB565 transactions complete but do not visibly update the panel.
 
 Important distinction:
 
@@ -56,11 +56,11 @@ Not yet:
 
 ## 3. Unknowns
 
-- Exact LCD controller IC.
-- Native resolution.
+- Exact LCD controller IC: ST7796S vs ILI9486 is not confirmed.
+- Native controller memory is currently treated as 320x480. Landscape display should be handled later with controller rotation or framebuffer rotation, not by addressing 480 columns directly.
 - Panel orientation and memory-scan direction.
-- RGB/BGR color order.
-- Required initialization command sequence.
+- RGB/BGR color order: observed BGR. Sending RGB666 red (`ff0000`) showed blue, and sending RGB666 blue (`0000ff`) showed red before enabling the controller BGR bit.
+- Required initialization command sequence. This module currently behaves like an RGB666/18-bit SPI panel; RGB565 writes are not a working display path with the current init sequence.
 - Whether the panel accepts 3.3 V logic when powered at 5 V.
 - Whether `RESET`, `CS`, and `D/C` have pullups on the panel module.
 - Maximum reliable SPI clock with the chosen wires and board.
@@ -70,7 +70,53 @@ Not yet:
 
 ## 4. Experiment Results
 
-No SPI LCD electrical or firmware experiment has been run yet.
+2026-05-10: Added the first destination GPIO lab layer.
+
+Implemented firmware commands:
+
+```text
+DEST_GPIO_STATUS
+DEST_GPIO_VALIDATE <signal> <gpio>
+DEST_GPIO_CLAIM <signal> <gpio>
+DEST_GPIO_SET <signal> <0|1>
+DEST_GPIO_PULSE <signal> <0|1> <duration_ms>
+DEST_GPIO_RELEASE <signal>
+DEST_GPIO_RELEASE ALL
+DEST_GPIO_RELEASE_ALL
+```
+
+Safety behavior:
+
+- No destination GPIO is configured at boot.
+- `DEST_GPIO_VALIDATE` is read-only.
+- `DEST_GPIO_CLAIM` rejects GPIOs already owned by the active GBC source profile.
+- Claimed pins are configured as output with internal pullups/pulldowns disabled.
+- `CS` and `RESET` idle high; other signals idle low.
+- `DEST_GPIO_RELEASE`, `SAFE_IDLE`, and `ELECTRICAL_ISOLATE` release destination claims back to disabled/no-pull pads.
+
+Browser support:
+
+- The Destination tab can edit the draft pin map.
+- Source-owned GPIOs are disabled in the destination GPIO dropdown.
+- The Live Pin Manipulation table can validate, claim, drive low/high, pulse, and release mapped output pins.
+
+Verification:
+
+- Firmware build passed on 2026-05-10.
+- Frontend production build passed on 2026-05-10.
+- Python backend syntax check passed on 2026-05-10.
+
+2026-05-10: Added first firmware SPI LCD lab implementation.
+
+Implementation:
+
+- Uses `esp_lcd_new_panel_io_spi()` and SPI DMA.
+- Avoids ST7789-specific panel driver code.
+- Sends a minimal MIPI-DCS init sequence: reset, sleep-out, RGB565 color mode, memory access control, inversion off, display on.
+- Draws full-screen RGB565 fills and color-bar test patterns using `CASET`, `RASET`, and `RAMWR`.
+- `DEST_SPI_LCD_SAFE_OFF` tears down panel IO, frees the SPI bus, releases destination GPIO claims, and disables the reset GPIO.
+
+No successful SPI LCD image output has been observed yet.
 
 Planned evidence artifacts:
 
@@ -91,7 +137,7 @@ Planned evidence artifacts:
 Before firmware drives the panel:
 
 1. Record panel/module name, seller link, markings, or controller IC.
-2. Record native resolution and expected driver.
+2. Treat current candidate controller as ST7796S/ILI9486 and verify against observed behavior.
 3. Confirm whether module logic is 3.3 V compatible when `VCC` is 5 V.
 4. Confirm backlight `LED` is externally powered/current-limited.
 5. Choose ESP32-P4 output pins that do not overlap the current GBC source wiring.
@@ -101,10 +147,26 @@ Before firmware drives the panel:
 Rules:
 
 - No destination pins enabled at boot.
-- No destination outputs until `DEST_SPI_LCD_INIT` is explicitly called.
-- `DEST_SPI_LCD_SAFE_OFF` must set `CS`, `RESET`, `D/C`, `SDI`, and `SCK` to high impedance or known-safe inactive state.
+- No destination outputs until the browser or host explicitly claims a GPIO through `DEST_GPIO_CLAIM`.
+- No SPI panel initialization until `DEST_SPI_LCD_INIT` is explicitly called.
+- `DEST_SPI_LCD_SAFE_OFF`, `SAFE_IDLE`, and `ELECTRICAL_ISOLATE` must release destination GPIOs to high impedance or known-safe inactive state.
 - Never connect `VCC` or `LED` to ESP32-P4 GPIO.
 - Verify shared ground before enabling SPI.
+
+### Phase D1.5 - Manual Destination Pin Control
+
+Goal: make destination pin assignment and oscilloscope probing a controlled browser workflow before any SPI driver is enabled.
+
+Workflow:
+
+1. Add or edit a destination pin in the Destination tab.
+2. Select an ESP32-P4 GPIO that is not owned by the active source profile.
+3. Press `Validate`.
+4. Press `Claim`.
+5. Probe the line while using `LOW`, `HIGH`, or `Pulse 100 ms`.
+6. Press `Release` before rewiring or changing modules.
+
+This phase is intentionally lower level than the SPI LCD panel driver. It proves the control path and pin ownership model first.
 
 ### Phase D2 - Standalone Destination Bring-Up
 
@@ -185,7 +247,7 @@ firmware/main/destination_spi_lcd.c
 Responsibilities:
 
 - Own destination SPI bus configuration.
-- Own panel IO and panel-driver handles.
+- Own panel IO and generic MIPI-DCS command transport.
 - Expose safe init/status/test-pattern/draw/shutdown functions.
 - Never configure pins unless explicitly initialized.
 - Keep all destination state separate from GBC source code.
@@ -270,4 +332,3 @@ Official ESP-IDF references to use during implementation:
 - SPI LCD panel IO: `esp_lcd_new_panel_io_spi()`
 - SPI bus DMA setup: `spi_bus_initialize(..., SPI_DMA_CH_AUTO)`
 - RGB LCD output, for future parallel IPS panels: `esp_lcd_new_rgb_panel()`
-

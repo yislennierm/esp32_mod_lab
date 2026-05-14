@@ -8,9 +8,13 @@ Use `gbc_probe.py` to communicate with the ESP32-P4 firmware over USB-Serial/JTA
 
 ```sh
 source /Users/nene/esp/v5.5/esp-idf/export.sh
-python host/gbc_probe.py --port /dev/cu.usbmodem14201 smoke
-python host/gbc_probe.py --port /dev/cu.usbmodem14201 command GET_VERSION
+python host/gbc_probe.py --port /dev/cu.wchusbserial5A470211841 smoke
+python host/gbc_probe.py --port /dev/cu.wchusbserial5A470211841 command GET_VERSION
 ```
+
+As of 2026-05-11, the normal lab firmware uses UART console/control on the WCH
+bridge. Native USB Serial/JTAG may still enumerate, but it is not the current
+known-good app protocol port.
 
 The smoke test currently verifies:
 
@@ -42,6 +46,56 @@ python host/validate_phase1_measurements.py \
 
 The validator blocks incomplete data, dangerous rails, duplicate GPIOs, unsafe
 voltages, and signals that require level shifting.
+
+## Source Ring Benchmark Evidence
+
+Use `collect_source_ring_bench.py` when the isolated
+`experiments/source_ring_bench/` firmware is flashed. It reads benchmark JSON
+records from the ESP32-P4 serial console and saves a computer-side evidence
+bundle with raw logs, parsed records, a summary, and a Markdown report.
+
+```sh
+source /Users/nene/esp/v5.5/esp-idf/export.sh
+python host/collect_source_ring_bench.py \
+  --port /dev/cu.wchusbserial5A470211841 \
+  --timeout-s 45 \
+  --native-records 1 \
+  --echo
+```
+
+Artifacts are written under `captures/benchmarks/source_ring/`.
+
+The normal lab firmware also exposes the same low-level source-ingress path as a
+command:
+
+```sh
+python host/gbc_probe.py \
+  --port /dev/cu.wchusbserial5A470211841 \
+  --timeout 45 \
+  command "SOURCE_RING_LOWLEVEL_BENCH 120 300 160 144 RGB565 0 1"
+```
+
+## PPA SRM Benchmark Evidence
+
+Use `collect_ppa_srm_bench.py` after flashing normal lab firmware that includes
+the `PPA_SRM_BENCH` command. It sends the command, collects both the PPA and CPU
+JSON records, and saves raw logs, parsed records, a summary, and a Markdown
+report.
+
+```sh
+source /Users/nene/esp/v5.5/esp-idf/export.sh
+python host/collect_ppa_srm_bench.py \
+  --port /dev/cu.wchusbserial5A470211841 \
+  --frames 120 \
+  --timeout-s 30 \
+  --echo
+```
+
+Artifacts are written under `captures/benchmarks/ppa_srm/`.
+
+This benchmark uses synthetic `160x144 RGB565 -> 320x288 RGB565` buffers. It
+does not touch the GBC source pins, SPI LCD destination, browser stream, or USB
+frame payload path.
 
 ## Fast LCD_CAM Decode Preset
 

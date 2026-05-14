@@ -104,8 +104,33 @@ export type FrameResponse = {
   metadata: Record<string, unknown>;
 };
 
+export type DestinationGpioResponse = {
+  ok: boolean;
+  command?: string;
+  signal?: string;
+  gpio?: number;
+  level?: number;
+  error?: string;
+  owner?: string;
+  claims?: Array<{ signal: string; gpio: number; level: number }>;
+};
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path, { cache: 'no-store' });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || `HTTP ${response.status}`);
+  }
+  return data as T;
+}
+
+async function postJson<T>(path: string, payload: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data?.error || `HTTP ${response.status}`);
@@ -117,8 +142,23 @@ export const api = {
   status: () => getJson<WorkbenchStatus>('/api/status'),
   profile: () => getJson<TargetProfile>('/api/profile'),
   destinationProfile: () => getJson<DestinationProfile>('/api/destination-profile'),
+  saveDestinationProfile: (payload: unknown) => postJson<{ ok: boolean; profile: DestinationProfile; path: string }>('/api/destination-profile', payload),
   artifacts: () => getJson<{ ok: boolean; root: string; items: ArtifactItem[] }>('/api/artifacts/recent'),
   gpios: () => getJson<{ ok: boolean; profile_id: string; gpios: PinRow[] }>('/api/workbench/gpios'),
+  destinationGpioStatus: () => getJson<DestinationGpioResponse>('/api/destination/gpio/status'),
+  destinationGpioValidate: (signal: string, gpio: number) => getJson<DestinationGpioResponse>(`/api/destination/gpio/validate?signal=${encodeURIComponent(signal)}&gpio=${gpio}`),
+  destinationGpioClaim: (signal: string, gpio: number) => getJson<DestinationGpioResponse>(`/api/destination/gpio/claim?signal=${encodeURIComponent(signal)}&gpio=${gpio}`),
+  destinationGpioSet: (signal: string, level: number) => getJson<DestinationGpioResponse>(`/api/destination/gpio/set?signal=${encodeURIComponent(signal)}&level=${level}`),
+  destinationGpioPulse: (signal: string, level: number, durationMs: number) => getJson<DestinationGpioResponse>(`/api/destination/gpio/pulse?signal=${encodeURIComponent(signal)}&level=${level}&duration_ms=${durationMs}`),
+  destinationGpioRelease: (signal: string) => getJson<DestinationGpioResponse>(`/api/destination/gpio/release?signal=${encodeURIComponent(signal)}`),
+  destinationSpiStatus: () => getJson<Record<string, unknown>>('/api/destination/spi/status'),
+  destinationSpiInit: () => getJson<Record<string, unknown>>('/api/destination/spi/init'),
+  destinationSpiSafeOff: () => getJson<Record<string, unknown>>('/api/destination/spi/safe-off'),
+  destinationSpiTestPattern: (pattern = 'orientation') => getJson<Record<string, unknown>>(`/api/destination/spi/test-pattern?pattern=${encodeURIComponent(pattern)}`),
+  destinationSpiTestPattern565: () => getJson<Record<string, unknown>>('/api/destination/spi/test-pattern565'),
+  destinationSpiShowGbcFrame: () => getJson<Record<string, unknown>>('/api/destination/spi/show-gbc-frame?timeout_ms=300'),
+  destinationSpiSignalBurst: (durationMs = 5000) => getJson<Record<string, unknown>>(`/api/destination/spi/signal-burst?duration_ms=${durationMs}`),
+  destinationSpiClear: (color = '0000') => getJson<Record<string, unknown>>(`/api/destination/spi/clear?color=${encodeURIComponent(color)}`),
   readGpios: () => getJson<{ ok: boolean; results: Array<Record<string, unknown>> }>('/api/workbench/read-gpios'),
   start: () => getJson<WorkbenchStatus>('/api/start'),
   stop: () => getJson<WorkbenchStatus>('/api/stop'),

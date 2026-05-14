@@ -60,6 +60,8 @@ This does not make CPU polling a production capture path, but it removes task mi
 
 2026-05-09: Added `docs/project_maintenance.md` to define cleanup, modularization, and preservation rules. The core decision is that GBC becomes the first target module and reference case, while ESP32-P4 capture primitives become reusable platform blocks.
 
+2026-05-10: Added the first compile-time production firmware mode, `GBC_P4_PRODUCTION_MIRROR`. This mode reuses the proven GBC source and SPI LCD destination modules, skips the USB command server, and boots directly into a source-to-destination loop. It is intentionally separate from lab firmware so the browser workbench remains available when the normal probe image is flashed.
+
 ## 5. Next Steps
 
 - Build and flash the Phase 1 firmware baseline.
@@ -70,4 +72,5 @@ This does not make CPU polling a production capture path, but it removes task mi
 - Keep timing-sensitive CPU-polled experiments pinned to one HP core or replace them with peripheral/DMA-backed capture.
 - Introduce a profile format so future consoles can reuse the same capture, artifact, and viewer tooling.
 - Keep GBC-specific behavior working while gradually extracting generic instrument APIs.
+- Keep lab and production images separated by explicit build scripts until a profile registry exists.
 - Use `docs/project_maintenance.md` as the gate before deleting generated files or moving experiment scripts.

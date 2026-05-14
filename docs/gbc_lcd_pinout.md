@@ -55,9 +55,9 @@ No pin measurements have been recorded yet.
 | 28 | B2 | 46 | temporary input-only blue data wiring |
 | 27 | B1 | 45 | temporary input-only blue data wiring |
 | 26 | B0 | 36 | temporary input-only blue data wiring |
-| 25 | G5 | 7 | temporary input-only green data wiring |
-| 24 | G4 | 8 | temporary input-only green data wiring |
-| 23 | G3 | 9 | temporary input-only green data wiring |
+| 25 | G5 | 6 | temporary input-only green data wiring; moved from GPIO7 to free SPI2 IO_MUX CS |
+| 24 | G4 | 5 | temporary input-only green data wiring; moved from GPIO8 to free SPI2 IO_MUX MOSI |
+| 23 | G3 | 4 | temporary input-only green data wiring; moved from GPIO9 to free SPI2 IO_MUX CLK |
 | 22 | G2 | 10 | temporary input-only green data wiring |
 | 21 | G1 | 11 | temporary input-only green data wiring |
 | 20 | G0 | 12 | temporary input-only green data wiring |
@@ -88,5 +88,5 @@ No pin measurements have been recorded yet.
 - Mark V0-V9, VCOM, VEE, VSHA, and VSHD as dangerous rails unless proven otherwise.
 - Validate or reject temporary `DCLK -> GPIO22`, `LP -> GPIO21`, `PS -> GPIO20`, `SPL -> GPIO19`, `CLS -> GPIO3`, and `SPS -> GPIO33` mappings after input-only tests and voltage measurements.
 - Validate or reject temporary red data mappings `R5 -> GPIO13`, `R4 -> GPIO14`, `R3 -> GPIO15`, `R2 -> GPIO16`, `R1 -> GPIO17`, and `R0 -> GPIO18` with input-only tests before RGB capture.
-- Validate or reject temporary green data mappings `G5 -> GPIO7`, `G4 -> GPIO8`, `G3 -> GPIO9`, `G2 -> GPIO10`, `G1 -> GPIO11`, and `G0 -> GPIO12` with input-only tests before RGB capture.
+- Validate or reject temporary green data mappings `G5 -> GPIO6`, `G4 -> GPIO5`, `G3 -> GPIO4`, `G2 -> GPIO10`, `G1 -> GPIO11`, and `G0 -> GPIO12` with input-only tests before RGB capture.
 - Validate or reject temporary blue data mappings `B5 -> GPIO50`, `B4 -> GPIO48`, `B3 -> GPIO47`, `B2 -> GPIO46`, `B1 -> GPIO45`, and `B0 -> GPIO36` with input-only tests before full-color capture. GPIO36 is in the previously avoided strapping range, so it should be treated as higher risk and kept input-only.

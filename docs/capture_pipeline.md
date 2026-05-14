@@ -221,7 +221,12 @@ Current source-driver preset:
 - capture size: `192x145`
 - stream period: `161x145`
 - visible area: `160x144`
+- visible source alignment: linear stream shift `-4` pixels
 - data mode: `RGB565`
+
+The `161x145` stream is not displayed directly. GBC-specific visible-frame consumers should call the source alignment path (`gbc_lcd_source_copy_visible_rgb565`) or apply the equivalent host crop: `src_pixel = y * 161 + x - 4`, with negative source pixels clamped to the first captured pixel. This alignment was measured with the deterministic GBC alignment ROM on 2026-05-11.
+
+For direct SPI LCD output, the same shift is applied inside the existing RGB565-to-panel conversion loop, so the 1x production display path does not allocate or copy a separate corrected `160x144` frame. Use the copy helper only when a downstream block requires a contiguous visible source buffer, such as current PPA handoff paths.
 - start marker: `SPS`
 - PCLK invert: `false`
 - DE model: held high for the current compatibility capture
@@ -912,3 +917,83 @@ Verification: dry run with the source already on captured two RGB565 frames and 
 - `captures/experiments/20260509T161053Z-boot_capture_rgb565/raw/frame_0000.bin`
 - `captures/experiments/20260509T161053Z-boot_capture_rgb565/frames/frame_0000.png`
 - `captures/experiments/20260509T161053Z-boot_capture_rgb565/summary.json`
+
+2026-05-11: Added PPA SRM benchmark to the normal lab firmware command set.
+
+Purpose: measure ESP32-P4 PPA scale/rotate/mirror throughput without flashing the standalone PPA experiment app that caused manual recovery on this board.
+
+Command:
+
+```sh
+PPA_SRM_BENCH [frame_count_1_to_1000]
+```
+
+Benchmark shape:
+
+- Synthetic input, no GBC GPIO capture.
+- `160x144 RGB565` source buffer.
+- `320x288 RGB565` destination buffer.
+- Compares blocking PPA SRM 2x scaling against CPU 2x scaling.
+- Prints JSON records for `PPA_SRM_SCALE2X_BENCH` and `CPU_SCALE2X_BENCH`.
+
+Verification so far:
+
+- `./scripts/build_probe_firmware.sh` passed.
+- `python3 -m py_compile host/collect_ppa_srm_bench.py` passed.
+- Flashed normal lab firmware over native USB Serial/JTAG on `/dev/cu.usbmodem1432201`, then reset manually and observed the app protocol on `/dev/cu.usbmodem14401`.
+- `PPA_SRM_BENCH 120` was collected with `host/collect_ppa_srm_bench.py`.
+
+Result:
+
+```json
+{"command":"PPA_SRM_SCALE2X_BENCH","fps":149.715,"avg_us":6679.3,"target_rate_met":true,"error":"none"}
+{"command":"CPU_SCALE2X_BENCH","fps":80.510,"avg_us":12420.8,"target_rate_met":true,"error":"none"}
+```
+
+Artifact:
+
+- `captures/benchmarks/ppa_srm/20260511T201252Z-ppa-srm-bench/`
+
+Interpretation: PPA SRM is about `1.86x` faster than the current CPU 2x scaler for synthetic `160x144 RGB565 -> 320x288 RGB565`. This proves PPA is useful for production scaling work. It does not solve the current SPI LCD bandwidth ceiling by itself.
+
+Host evidence collection:
+
+```sh
+source /Users/nene/esp/v5.5/esp-idf/export.sh
+python host/collect_ppa_srm_bench.py \
+  --port /dev/cu.wchusbserial5A470211841 \
+  --frames 120 \
+  --timeout-s 30 \
+  --echo
+```
+
+Artifacts are written under `captures/benchmarks/ppa_srm/`.
+
+## Production Throughput Notes
+
+Current best stable production test:
+
+```text
+GBC LCD bus
+  -> LCD_CAM/GDMA ring capture, 192x145 RGB565 window
+  -> source alignment view, 161x145 stream with -4 linear pixel shift
+  -> raw SPI master using SPI_CLK_SRC_SPLL at 40 MHz
+  -> SPI LCD in RGB565 panel mode
+```
+
+Measured result on 2026-05-12:
+
+- Stable live output: about `43-44.6 fps`.
+- LCD draw time: about `13.26 ms`.
+- Source capture interval in stable mode: about `19.95 ms`.
+- No dropped frames or draw failures in the best run.
+
+Important distinction:
+
+- `esp_lcd` SPI IO currently cannot select `SPI_CLK_SRC_SPLL`; with the default ESP32-P4 SPI clock source, `40 MHz` is rejected by the SPI driver.
+- Raw SPI can select `SPI_CLK_SRC_SPLL`, and the same LCD path then accepts `40 MHz`.
+- RGB565 panel mode is required for this path; RGB666 expands every pixel to 3 SPI bytes and wastes bandwidth for this source.
+
+Open issue:
+
+- Direct `161x145` ring capture showed the desired `~16.8 ms` frame interval, but stopped after 7 frames and timed out. This suggests the remaining work is in continuous ring descriptor rearming/EOF handling, not in SPI output bandwidth.

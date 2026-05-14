@@ -197,15 +197,15 @@
         },
         "G3": {
           "display_bus_pin": 23,
-          "esp32p4_gpio": 9
+          "esp32p4_gpio": 4
         },
         "G4": {
           "display_bus_pin": 24,
-          "esp32p4_gpio": 8
+          "esp32p4_gpio": 5
         },
         "G5": {
           "display_bus_pin": 25,
-          "esp32p4_gpio": 7
+          "esp32p4_gpio": 6
         }
       },
       "blue": {

@@ -1824,3 +1824,693 @@ Results:
 - `SAFE_IDLE` returned `mode=lcdcam_detached_gpio_floating_input`.
 
 Interpretation: the current USB Serial/JTAG stdio path is not reliable for this single-large-blob streaming shape. The earlier per-frame binary sequence is slower but robust. Do not treat stdio blob streaming as the final capture-card transport.
+
+2026-05-10: Added first destination GPIO lab controls.
+
+Reason: begin SPI LCD destination research without breaking the working GBC source/live-view path. Destination pins need a professional ownership and control model before panel-driver code is allowed to drive them.
+
+Changes:
+
+- Added firmware module `destination_gpio_lab`.
+- Added `DEST_GPIO_STATUS`, `DEST_GPIO_VALIDATE`, `DEST_GPIO_CLAIM`, `DEST_GPIO_SET`, `DEST_GPIO_PULSE`, `DEST_GPIO_RELEASE`, and `DEST_GPIO_RELEASE_ALL`.
+- Destination GPIOs are never configured at boot.
+- Destination claims reject the current GBC source GPIOs.
+- `SAFE_IDLE` and `ELECTRICAL_ISOLATE` now release any destination GPIO claims before applying source-side idle/isolation.
+- Added backend endpoints under `/api/destination/gpio/*`.
+- Enabled Destination tab controls for validate, claim, low, high, pulse, and release.
+
+Verification:
+
+- `./scripts/build_probe_firmware.sh` passed.
+- `cd host/workbench/frontend && npm run build` passed.
+- `python3 -m py_compile host/live_lcdcam_stream_viewer.py` passed.
+
+Interpretation: the project now has an explicit lab-mode destination pin-control layer. This is not yet an SPI LCD driver; it is the controlled pin-ownership and probing phase before SPI output experiments.
+
+2026-05-10: Switched first SPI LCD firmware path from ST7789-specific to generic ST7796S/ILI9486-style MIPI-DCS.
+
+Reason: the connected SPI LCD is now believed to be ST7796S or ILI9486, so running an ST7789 panel driver would be a poor experiment and could hide controller-specific failures.
+
+Changes:
+
+- Replaced ST7789 panel-driver dependency with generic `esp_lcd_panel_io_spi()` command/color transfers.
+- Added a conservative MIPI-DCS init path: hardware reset, software reset, sleep out, RGB565 color mode, memory access control, inversion off, display on.
+- Added address-window and `RAMWR` helpers for RGB565 full-screen fill and color bars.
+- Updated the destination profile to 480x320, ST7796S candidate, RGB565, GPIO52/29/53/31/28 for CS/RESET/D-C/SDI/SCK.
+- Documented the unresolved ST7796S vs ILI9486 question and the risk that some ILI9486 SPI modules require RGB666/18-bit pixel transfers.
+
+Verification:
+
+- `python3 -m json.tool profiles/spi_lcd_destination.json` passed.
+- `./scripts/build_probe_firmware.sh` passed.
+- `cd host/workbench/frontend && npm run build` passed.
+- `./scripts/flash_probe_firmware.sh /dev/cu.wchusbserial5A470211841` passed.
+- Workbench restarted at `http://127.0.0.1:8791/`.
+- `/api/status` reported `source_state=live` and about `5.43 fps`.
+- `/api/destination/spi/status` reported `state=safe_off`, controller `st7796s_ili9486_mipi_dcs`, resolution `480x320`, SPI2 at `10 MHz`, pins `CS=52`, `RESET=29`, `D/C=53`, `MOSI=31`, `SCLK=28`.
+
+Interpretation: the device is ready for a first controlled SPI LCD destination bring-up. The panel remains safe-off until `DEST_SPI_LCD_INIT` is explicitly triggered from the Destination tab or API.
+
+2026-05-10: Added SPI destination signal-burst command for scope/debug visibility.
+
+Reason: `DEST_SPI_LCD_STATUS` intentionally produces no panel-pin traffic, and a single color-bar transfer can be too brief to observe reliably. The user observed that init caused visible activity but status/color-bar probing did not show changing signals.
+
+Changes:
+
+- Added `DEST_SPI_LCD_SIGNAL_BURST <duration_ms>`.
+- Added backend endpoint `/api/destination/spi/signal-burst?duration_ms=5000`.
+- Added Destination tab button `SIGNAL_BURST 5s`.
+- The burst repeatedly writes alternating RGB565 data for the requested duration, so `SCK`, `SDI/MOSI`, `CS`, and `D/C` should be observable for several seconds after `DEST_SPI_LCD_INIT`.
+
+Verification:
+
+- `./scripts/build_probe_firmware.sh` passed.
+- `cd host/workbench/frontend && npm run build` passed.
+- `python3 -m py_compile host/live_lcdcam_stream_viewer.py` passed.
+- `./scripts/flash_probe_firmware.sh /dev/cu.wchusbserial5A470211841` passed.
+- Workbench restarted at `http://127.0.0.1:8791/`.
+- `/api/destination/spi/status` reported `state=safe_off` after reset.
+- `/api/status` reported live source capture running at about `5.42 fps`.
+
+Interpretation: use `DEST_SPI_LCD_INIT` first, then `SIGNAL_BURST 5s` while probing SPI lines. If the burst returns `ok=true` but no pin activity is visible, the next suspect is board-header GPIO mapping or probing point, not panel-controller initialization.
+
+2026-05-10: First visible SPI LCD RAM-write evidence.
+
+Observation:
+
+- `DEST_SPI_LCD_INIT` produced a visible dim/change effect.
+- `DEST_SPI_LCD_CLEAR565BE f800` and `DEST_SPI_LCD_CLEAR666 ff0000` returned `ok=true`.
+- The screen showed a thick gray bar on the left side and a blue section on the right side instead of a full red fill.
+
+Interpretation:
+
+- SPI RAM writes are reaching the panel.
+- The previous `480x320` address window is likely wrong for the controller memory.
+- ST7796S/ILI9486 modules are commonly addressed as `320x480`; landscape should be treated as rotation, not as native 480-column memory.
+
+Change:
+
+- Updated the first destination SPI LCD firmware/profile geometry from `480x320` to native `320x480`.
+
+Follow-up:
+
+- After the `320x480` change, `DEST_SPI_LCD_CLEAR666 ff0000` produced a full blue screen.
+- `DEST_SPI_LCD_CLEAR666 0000ff` produced a full red screen.
+- This confirms full-frame writes work and the controller/panel color order is BGR under the initial MADCTL setting.
+- Updated firmware init to set MADCTL BGR bit (`0x08`) and updated the destination profile color order to `bgr`.
+- After the BGR fix, `DEST_SPI_LCD_CLEAR666 ff0000` produced full red.
+- Replaced the older RGB565 test-pattern path with RGB666 patterns:
+  - `DEST_SPI_LCD_TEST_PATTERN orientation`
+  - `DEST_SPI_LCD_TEST_PATTERN color_bars`
+- Flashed and ran the orientation pattern successfully; firmware returned `ok=true`.
+- Retested RGB565 after geometry and BGR were fixed:
+  - `DEST_SPI_LCD_CLEAR565BE f800`, `07e0`, and `001f` returned `ok=true`.
+  - The panel still showed the previous orientation pattern, so RGB565 is not a working visible update path with the current init sequence.
+  - `DEST_SPI_LCD_CLEAR666 0000ff` returned `ok=true` and is the working pixel path to continue with.
+- Updated the destination profile/documentation from RGB565 to RGB666 as the active destination pixel format.
+- Added and flashed a dedicated RGB565 color-bar test, `DEST_SPI_LCD_TEST_PATTERN565`.
+- `DEST_SPI_LCD_TEST_PATTERN565` returned `ok=true`, but the panel showed only dim gray.
+- Sent the RGB666 color-bar pattern afterward; firmware returned `ok=true`, restoring the working display path.
+- Conclusion: this module should be treated as RGB666-only for now. RGB565 is not just a color-order problem; it does not render useful pixels with the current command sequence.
+
+2026-05-10: Added first one-shot GBC source-to-SPI LCD destination path.
+
+Reason: prove the ESP32-P4 can act as the whole pipeline without sending the image through USB/browser first.
+
+Implementation:
+
+- Added `DEST_SPI_LCD_SHOW_GBC_FRAME [timeout_ms] [pclk_invert]`.
+- The command captures one GBC frame with the existing GBC LCD source driver in RGB565 mode.
+- It uses the first `160x144` visible pixels from the `161x145` captured stream.
+- It converts RGB565 to RGB666 on the ESP32-P4.
+- Initial version scaled the image 2x to `320x288` and drew it centered vertically at `x=0`, `y=96` on the `320x480` SPI LCD.
+- The user correctly flagged scaling as processing, so the default command was changed to 1:1 output.
+- Current version draws the `160x144` source 1:1 at `x=80`, `y=168`, with only the required RGB565-to-RGB666 color conversion.
+
+Result:
+
+- `DEST_SPI_LCD_INIT` returned `ok=true`.
+- First 2x run: `DEST_SPI_LCD_SHOW_GBC_FRAME 300 0` returned `ok=true`, capture completed in `35684 us`, SPI draw completed in `396226 us`.
+- 1:1 run: `DEST_SPI_LCD_SHOW_GBC_FRAME 300 0` returned `ok=true`, capture completed in `32296 us`, SPI draw completed in `344246 us`.
+- Source was reported as `160x144`, stride `161`, RGB565.
+- Destination was reported as `320x480`, RGB666, scale `1`, offset `x=80`, `y=168`.
+
+Interpretation: one-shot source-to-destination drawing works from the firmware perspective. The image is visible but rotated/flipped due to destination orientation, which should be handled as destination controller orientation where possible rather than source image processing. Current draw time is slow because it writes many small SPI transactions at 10 MHz; the next optimization is larger batched line conversion and higher SPI clock testing.
+
+2026-05-10: Resolved SPI LCD destination orientation with controller MADCTL.
+
+Tests:
+
+- `MADCTL=0x28` made the mirror correct but image upside down.
+- `MADCTL=0x68` made orientation upright but mirrored.
+- `MADCTL=0xA8` was upside down and flipped.
+- `MADCTL=0xE8` produced the correct orientation.
+
+Change:
+
+- Set default SPI LCD init MADCTL to `0xE8`.
+- Updated the destination profile with `madctl=0xe8`.
+- Changed one-shot GBC draw to clear the full destination before drawing the 1:1 frame, so stale pixels from earlier destination tests do not remain visible.
+
+2026-05-10: Started source-straight GBC-to-SPI LCD mirror benchmark.
+
+Reason: estimate the practical ESP32-P4 source-to-destination path when USB/browser live view is removed. For this benchmark the destination must not rotate, mirror, scale, or otherwise fix geometry; only the necessary RGB565 source to RGB666 destination color conversion is allowed.
+
+Changes:
+
+- Added `DEST_SPI_LCD_MIRROR_BENCH [frames] [timeout_ms] [pclk_invert]`.
+- Added a no-clear 1:1 draw path so repeated frames do not spend time clearing the full panel.
+- Set the benchmark destination MADCTL to `0x08`, meaning BGR color order only. This intentionally removes the earlier `0xE8` orientation fix.
+- Tested SPI destination clocks:
+  - `10 MHz`: `10/10` frames, elapsed `1173950 us`, about `8.5 fps`, average capture `34234 us`, average draw `83152 us`.
+  - `20 MHz`: `10/10` frames, elapsed `845290 us`, about `11.8 fps`, average capture `29563 us`, average draw `54957 us`.
+  - `20 MHz` with 40-line batched 1:1 writes: `30/30` frames, elapsed `2001759 us`, about `15.0 fps`, average capture `41764 us`, average draw `24954 us`.
+  - `26 MHz`: rejected by the ESP-IDF SPI LCD path during init with `ESP_ERR_INVALID_ARG`.
+  - `30 MHz`: rejected by the ESP-IDF SPI LCD path during init with `ESP_ERR_INVALID_ARG`.
+  - `40 MHz`: rejected by the ESP-IDF SPI LCD path during init with `ESP_ERR_INVALID_ARG`.
+
+Interpretation: the firmware-only path is already faster than the browser stream. The current GPIO-matrix SPI destination is proven at `20 MHz`; `26/30/40 MHz` are not accepted by this ESP-IDF SPI LCD configuration. Batching reduced draw time from about `55 ms` to about `25 ms`, shifting the dominant cost back toward source capture. This benchmark keeps source geometry straight and performs only RGB565-to-RGB666 conversion.
+
+2026-05-10: Added and flashed early production mirror firmware.
+
+Reason: test what pure firmware can do without the browser workbench or USB command server in the frame path.
+
+Changes:
+
+- Added compile-time mode `GBC_P4_PRODUCTION_MIRROR`.
+- Added `production_mirror.c` / `production_mirror.h`.
+- Added reusable `destination_spi_lcd_init()` and `destination_spi_lcd_safe_off()` APIs so production code does not need to call command handlers.
+- Added `scripts/build_production_mirror.sh`.
+- Added `scripts/flash_production_mirror.sh`.
+- Production mode boots directly into GBC source capture -> SPI LCD draw.
+- Production mode keeps source geometry straight: no rotation, no mirror, no scaling. It only converts RGB565 source pixels to RGB666 destination bytes.
+
+Verification:
+
+- `./scripts/build_probe_firmware.sh` passed for normal lab firmware.
+- `./scripts/build_production_mirror.sh` passed for production firmware.
+- `./scripts/flash_production_mirror.sh /dev/cu.wchusbserial5A470211841` passed.
+- Metrics were read from USB Serial/JTAG `/dev/cu.usbmodem14401`.
+
+Observed production metrics:
+
+```json
+{"mode":"production_mirror","frames":15,"fps_x1000":14931,"avg_capture_us":41953,"avg_draw_us":24986,"max_capture_us":41985,"max_draw_us":24997,"capture_failures":0,"draw_failures":0}
+```
+
+Interpretation: production mirror mode is stable at about `14.9 fps` with zero failures in the sampled window. This confirms the pure firmware path behaves like the command benchmark. The next performance target is source capture, then destination transport bandwidth.
+
+2026-05-10: Improved production mirror with overlapped source capture and SPI drawing.
+
+Reason: the initial production loop captured one frame and then drew one frame serially. That underused the ESP32-P4 because source capture and destination transfer did not overlap.
+
+Changes:
+
+- Changed production mirror into a producer/consumer pipeline with three DMA-capable frame slots.
+- Kept the LCD_CAM/GDMA source capture configured across a window of frames.
+- Pinned the draw task separately from the capture task.
+- Preserved the production policy: no rotation, no mirror, no scaling, and only RGB565 source to RGB666 destination color conversion.
+
+Best observed metrics after flashing:
+
+```json
+{"mode":"production_mirror_overlap","displayed":30,"captured":30,"fps_x1000":29863,"avg_capture_us":23333,"avg_draw_us":25076,"max_capture_us":23389,"max_draw_us":25120,"dropped_frames":0,"capture_failures":0,"draw_failures":0,"capture_error":"none","draw_error":"none"}
+```
+
+Interpretation: overlap nearly doubled the production path from about `14.9 fps` to about `29.86 fps` with zero drops. This is real progress, but it is still below the GBC frame rate. Current capture time is about `23.3 ms`, and current destination draw time is about `25.1 ms`; both are longer than the roughly `16.7 ms` native frame period.
+
+2026-05-10: Tested raw write-only SPI destination backend and disabled it as the default.
+
+Reason: determine whether the ESP-IDF LCD panel IO wrapper was the reason higher SPI clocks were rejected on the current SPI LCD wiring.
+
+Changes:
+
+- Added an experimental raw SPI backend inside the SPI LCD destination module.
+- It manually drives D/C and uses `SPI_DEVICE_HALFDUPLEX | SPI_DEVICE_NO_DUMMY`.
+- It tries `40 MHz`, `30 MHz`, `26 MHz`, then `20 MHz`.
+
+Observed metrics:
+
+```json
+{"mode":"production_mirror_overlap","displayed":15,"captured":15,"fps_x1000":14931,"avg_capture_us":26790,"avg_draw_us":32511,"max_capture_us":27033,"max_draw_us":32531,"dropped_frames":0,"capture_failures":0,"draw_failures":0,"capture_error":"none","draw_error":"none"}
+```
+
+Interpretation: the raw SPI backend did not improve throughput on the current wiring and reduced practical output to about `14.9 fps`, with draw time increasing to about `32.5 ms`. The known-good production firmware was restored to the ESP LCD DMA wrapper at `20 MHz`, returning the board to about `29.86 fps`.
+
+Bandwidth note: the current SPI LCD path uses RGB666 destination writes, so a `160x144` source frame costs `69120` payload bytes. At `59.7 fps`, that is about `33.0 Mbit/s` before command and transaction overhead. A `20 MHz` one-bit SPI link cannot carry that full-rate stream. The next destination performance path is either native SPI IO_MUX rewiring with a proven higher clock, a working RGB565 panel mode, or a wider destination interface such as parallel RGB/I80/QSPI.
+
+2026-05-10: Corrected production source stride and added on-screen FPS overlay.
+
+Reason: the faster overlapped production path showed duplicated GAME BOY letters on the SPI LCD, while a slower test path did not. The production draw path was interpreting the DMA capture buffer as `161` samples per row even though the LCD_CAM capture buffer is allocated as `192` samples per row. That is a stride mismatch and can create repeated/sheared image content.
+
+Changes:
+
+- Changed production mirror draw calls to use `GBC_LCD_SOURCE_CAPTURE_WIDTH` as the source row stride.
+- Added `destination_spi_lcd_draw_fps_overlay()`.
+- Production firmware now draws a small `FPS` label in the top-left corner after every frame using the latest one-second metric window.
+
+Verification:
+
+- `./scripts/build_production_mirror.sh` passed.
+- `./scripts/flash_production_mirror.sh /dev/cu.wchusbserial5A470211841` passed.
+- Serial metrics after flashing remained about `29.86 fps` with zero drops:
+
+```json
+{"mode":"production_mirror_overlap","displayed":30,"captured":30,"fps_x1000":29864,"avg_capture_us":23128,"avg_draw_us":29869,"max_capture_us":23204,"max_draw_us":29907,"dropped_frames":0,"capture_failures":0,"draw_failures":0,"capture_error":"none","draw_error":"none"}
+```
+
+Interpretation: on-screen FPS costs a few milliseconds of SPI draw time but does not reduce the current displayed frame count because the pipeline remains overlapped and source/destination timing is still around the same effective cadence. Visual confirmation is still required to determine whether the duplicated-letter defect was fully caused by the stride mismatch or whether an additional frame-phase issue remains.
+
+2026-05-11: Restored known-good SPI LCD destination baseline after failed IO_MUX rewire.
+
+Reason: the SPI LCD was rewired from the previous working GPIO-matrix pins to the ESP32-P4 SPI2 IO_MUX pins in an attempt to improve destination bandwidth. The rewire proved that `CS=7`, `MOSI=8`, and `SCK=9` can produce clean SPI waveforms, but the LCD stayed white. Returning to the old physical wiring also stayed white until the firmware routing flag was corrected.
+
+Known-good restored wiring:
+
+- `CS -> GPIO52`
+- `SDI/MOSI -> GPIO31`
+- `SCK -> GPIO28`
+- `RESET -> GPIO29`
+- `D/C -> GPIO53`
+
+Firmware baseline restored:
+
+- ESP LCD DMA wrapper path enabled.
+- Raw SPI experiment disabled.
+- `20 MHz` SPI clock.
+- RGB666 destination writes.
+- GPIO-matrix SPI routing. `SPICOMMON_BUSFLAG_IOMUX_PINS` must not be used with `GPIO52/31/28`.
+
+Verification:
+
+- `./scripts/build_production_mirror.sh` passed.
+- Flash through `/dev/cu.wchusbserial5A470211841` passed after the native USB port briefly failed with a stub checksum error.
+- User confirmed color output returned on the SPI LCD.
+
+Interpretation: the old destination wiring remains the recovery baseline. The failed IO_MUX experiment should not be mixed into the production mirror or normal lab firmware until it is isolated as a separate destination profile/test firmware. The exact firmware regression was leaving `SPICOMMON_BUSFLAG_IOMUX_PINS` enabled while using GPIO-matrix pins.
+
+2026-05-11: Ran isolated source-ingress benchmark firmware.
+
+Purpose: test the GBC source capture path without lab-mode interference from browser streaming, SPI LCD destination drawing, TinyUSB, PNG rendering, or frame payload streaming.
+
+Firmware:
+
+- App: `experiments/source_ring_bench/`
+- Build script: `./scripts/build_source_ring_bench.sh`
+- Flash script: `./scripts/flash_source_ring_bench.sh`
+- Flash port used: `/dev/cu.wchusbserial5A470211841`
+- Native USB flash attempt reached the chip but failed during stub upload with checksum error; WCH UART flash succeeded.
+
+Representative result:
+
+```json
+{"ok":true,"command":"SOURCE_RING_BENCH_AUTO","schema":"esp32_mod_lab.benchmark.source_ring.v1","run_index":2,"source_profile":"gbc_lcd","mode":"isolated_source_ingress_counters_only","performance_path":"lcdcam_gdma_double_buffer_rearm","next_performance_path":"persistent_continuous_descriptor_ring","requested_frames":120,"completed_frames":120,"dropped_frames":0,"partial_frames":0,"sync_loss_count":0,"dma_errors":0,"ring_slots":2,"ring_high_water_mark":1,"data_mode":"RGB565","capture_width":192,"capture_height":145,"bytes_per_sample":2,"frame_bytes":55680,"timeout_ms":300,"pclk_invert":false,"start_trigger":"SPS_RISING_THEN_SPL_FALLING","start_trigger_seen":true,"target_source_fps":59.730,"target_frame_us":16742.0,"target_rate_met":false,"avg_capture_budget_pct":119.3,"elapsed_us":2416658,"completed_fps":49.655,"payload_mbytes_per_s":2.765,"first_frame_us":19788,"avg_capture_us":19980,"max_capture_us":20765,"failure_stage":"none","last_esp_err":0,"run_esp_err":0,"checksum":1119877120}
+```
+
+Interpretation: source ingress is clean and repeatable in the isolated image: `120/120` frames completed, no drops, no partial frames, no sync loss, and no DMA errors. The measured rate is about `49.6 fps`, with average capture time around `19.98 ms`, which is `119.3%` of the GBC frame budget. This proves the current below-native source FPS is not caused by browser live view, SPI LCD output, TinyUSB, PNG rendering, or lab command overhead. The next source-performance step is a persistent continuous LCD_CAM/GDMA descriptor-ring path rather than more UI or SPI tuning.
+
+2026-05-11: Extended the isolated source-ingress benchmark with a low-level cyclic LCD_CAM/GDMA descriptor ring and a native visible-size `160x144` test.
+
+Purpose: separate true source ingress from the older browser-compatible programmed capture size. The previous `192x145` RGB565 benchmark captured `55,680` bytes per frame, while native GBC visible RGB565 is `160x144x2 = 46,080` bytes. The byte ratio is `1.2083`, which matches the older `~19.98 ms` capture time versus the `~16.54 ms` native-size result.
+
+Representative low-level cyclic ring results:
+
+```json
+{"ok":true,"command":"SOURCE_RING_LOWLEVEL_BENCH_AUTO","schema":"esp32_mod_lab.benchmark.source_ring.v1","run_index":1,"source_profile":"gbc_lcd","mode":"isolated_source_ingress_counters_only","performance_path":"low_level_cyclic_lcdcam_gdma_descriptor_ring","requested_frames":120,"completed_frames":120,"dropped_frames":0,"partial_frames":0,"sync_loss_count":0,"dma_errors":0,"ring_slots":3,"descriptor_count_per_slot":14,"ring_rearms":119,"ring_rearm_failures":0,"unknown_eof_desc":0,"data_mode":"RGB565","capture_width":192,"capture_height":145,"bytes_per_sample":2,"frame_bytes":55680,"timeout_ms":300,"pclk_invert":false,"start_trigger":"SPS_RISING_THEN_SPL_FALLING","start_trigger_seen":true,"target_source_fps":59.730,"target_rate_met":false,"avg_capture_budget_pct":119.3,"elapsed_us":2395879,"completed_fps":50.086,"payload_mbytes_per_s":2.789,"first_frame_us":19791,"avg_capture_us":19967,"max_capture_us":20763,"failure_stage":"none","last_esp_err":0,"run_esp_err":0,"checksum":1119877120}
+{"ok":true,"command":"SOURCE_RING_LOWLEVEL_BENCH_AUTO","schema":"esp32_mod_lab.benchmark.source_ring.v1","run_index":2,"source_profile":"gbc_lcd","mode":"isolated_source_ingress_counters_only","performance_path":"low_level_cyclic_lcdcam_gdma_descriptor_ring","requested_frames":120,"completed_frames":120,"dropped_frames":0,"partial_frames":0,"sync_loss_count":0,"dma_errors":0,"ring_slots":3,"descriptor_count_per_slot":12,"ring_rearms":119,"ring_rearm_failures":0,"unknown_eof_desc":0,"data_mode":"RGB565","capture_width":160,"capture_height":144,"bytes_per_sample":2,"frame_bytes":46080,"timeout_ms":300,"pclk_invert":false,"start_trigger":"SPS_RISING_THEN_SPL_FALLING","start_trigger_seen":true,"target_source_fps":59.730,"target_rate_met":true,"avg_capture_budget_pct":98.7,"elapsed_us":1982437,"completed_fps":60.532,"payload_mbytes_per_s":2.789,"first_frame_us":16536,"avg_capture_us":16520,"max_capture_us":16600,"failure_stage":"none","last_esp_err":0,"run_esp_err":0,"checksum":1119877120}
+```
+
+Interpretation: isolated ESP32-P4 source ingress can sustain native visible-size GBC RGB565 payload capture at source-rate class with zero drops/errors in this counters-only test. This does not yet prove image-perfect continuous line/frame phase for every boot/game condition, because the benchmark uses byte-count EOF and reports counters rather than decoded pictures. It does prove the MCU/LCD_CAM/GDMA path is not inherently limited to `~30 fps` or `~50 fps`; those earlier numbers came from lab transport/output overhead and from over-capturing the `192x145` compatibility buffer.
+
+2026-05-11: Added host-side source-ring evidence collector.
+
+Purpose: preserve the source-ingress FPS proof as a computer-side artifact instead of relying on a transient terminal monitor session. The collector reads serial JSON records from the isolated `experiments/source_ring_bench/` firmware and writes raw logs, parsed JSONL records, summary JSON, and a Markdown report.
+
+Command:
+
+```sh
+source /Users/nene/esp/v5.5/esp-idf/export.sh
+python host/collect_source_ring_bench.py --port /dev/cu.wchusbserial5A470211841 --timeout-s 45 --native-records 1 --echo
+```
+
+Artifact:
+
+- `captures/benchmarks/source_ring/20260511T184144Z-source-ring-bench/`
+
+Computer-side summary:
+
+- Records collected: `3`
+- Native visible `160x144` low-level records: `1`
+- Best native visible FPS: `60.532`
+- Native visible target met: `True`
+- Native visible drops: `0`
+- Native visible DMA errors: `0`
+- Native visible average capture: `16528 us`
+
+Interpretation: the computer has now recorded the high-FPS source-ingress result as reproducible evidence. This still proves counters-only ingress, not browser live view FPS.
+
+2026-05-11: Promoted the low-level native source-ring benchmark into the normal lab firmware command set.
+
+Changes:
+
+- Added `SOURCE_RING_LOWLEVEL_BENCH <frame_count> [timeout_ms] [width] [height] [RGB565] [pclk_invert] [frame_sync]`.
+- Default geometry is native visible `160x144`.
+- The command uses the low-level cyclic LCD_CAM/GDMA descriptor-ring path.
+- It emits counters only and explicitly excludes browser frame streaming, SPI LCD drawing, and PNG rendering from the hot path.
+- Removed GPIO7/GPIO8/GPIO9 from the GBC source safe-idle/electrical-isolate lists and input-test allowlist. Those pins were part of the abandoned SPI IO_MUX experiment and are no longer current GBC source pins.
+- Moved normal lab console/control back to UART on `/dev/cu.wchusbserial5A470211841`, matching the proven isolated benchmark transport. Native USB Serial/JTAG enumerated but did not answer the JSON app protocol during this test.
+
+Verification:
+
+```sh
+source /Users/nene/esp/v5.5/esp-idf/export.sh
+python host/gbc_probe.py --port /dev/cu.wchusbserial5A470211841 --timeout 5 command PING
+python host/gbc_probe.py --port /dev/cu.wchusbserial5A470211841 --timeout 45 command "SOURCE_RING_LOWLEVEL_BENCH 120 300 160 144 RGB565 0 1"
+```
+
+Result:
+
+```json
+{"ok":true,"command":"SOURCE_RING_LOWLEVEL_BENCH","schema":"esp32_mod_lab.benchmark.source_ring.v1","source_profile":"gbc_lcd","mode":"source_ingress_counters_only","performance_path":"low_level_cyclic_lcdcam_gdma_descriptor_ring","next_performance_path":"production_source_frame_ring","requested_frames":120,"completed_frames":120,"dropped_frames":0,"partial_frames":0,"sync_loss_count":0,"dma_errors":0,"ring_slots":3,"descriptor_count_per_slot":12,"ring_rearms":119,"ring_rearm_failures":0,"unknown_eof_desc":0,"data_mode":"RGB565","capture_width":160,"capture_height":144,"bytes_per_sample":2,"frame_bytes":46080,"timeout_ms":300,"pclk_invert":false,"start_trigger":"SPS_RISING_THEN_SPL_FALLING","start_trigger_seen":true,"target_source_fps":59.73,"target_frame_us":16742.0,"target_rate_met":true,"avg_capture_budget_pct":98.7,"elapsed_us":1982435,"completed_fps":60.532,"payload_mbytes_per_s":2.789,"first_frame_us":16536,"avg_capture_us":16520,"max_capture_us":16600,"failure_stage":"none","last_esp_err":0,"run_esp_err":0,"checksum":1119877120}
+```
+
+Interpretation: the same high-FPS source-ingress path now works from the normal lab firmware over the WCH UART control path. This is the regression gate to use before wiring the low-level source ring into browser or destination features.
+
+2026-05-11: Blocked default flashing of the standalone PPA SRM benchmark after repeated manual recovery.
+
+Purpose: protect the development loop from standalone experiment images that bypass the known-good lab firmware boot, console, and recovery behavior.
+
+Observed issue:
+
+- The PPA SRM benchmark built successfully as an isolated ESP-IDF app.
+- Flash attempts and follow-up recovery around this standalone path forced manual board recovery twice.
+- This creates too much operational risk for the normal research loop.
+
+Change:
+
+- `scripts/flash_ppa_srm_bench.sh` now refuses to flash unless `ALLOW_EXPERIMENTAL_PPA_FLASH=1` is set.
+- `experiments/ppa_srm_bench/README.md` now records that this app is compile evidence only until PPA is tested behind the known-good firmware path.
+- `docs/DECISIONS.md` now states that standalone experiment firmware is not the default flash path.
+
+Interpretation: this does not invalidate PPA as a useful ESP32-P4 block. It invalidates the current standalone PPA app as a safe iteration method on this board. The next PPA test should be a lab firmware command that allocates synthetic buffers, runs PPA SRM, prints JSON, and then returns to the normal command loop.
+
+2026-05-11: Added PPA SRM benchmark as a normal lab firmware command.
+
+Purpose: continue PPA investigation without flashing the risky standalone PPA app.
+
+Changes:
+
+- Added `firmware/main/ppa_srm_bench.c` and `firmware/main/ppa_srm_bench.h`.
+- Added `PPA_SRM_BENCH [frame_count_1_to_1000]` to the command router.
+- The command allocates synthetic DMA-capable PSRAM buffers and benchmarks `160x144 RGB565 -> 320x288 RGB565`.
+- The command prints one JSON record for PPA SRM and one JSON record for CPU scaling.
+- Added `host/collect_ppa_srm_bench.py` to preserve PPA-vs-CPU benchmark output as computer-side evidence under `captures/benchmarks/ppa_srm/`.
+- Safe-recovery firmware blocks this command; normal lab firmware allows it.
+- Added `esp_driver_ppa`, `esp_mm`, and `esp_psram` to the firmware component requirements.
+
+Verification:
+
+- `./scripts/build_probe_firmware.sh` passed.
+- `python3 -m py_compile host/collect_ppa_srm_bench.py` passed.
+- Flash through `/dev/cu.wchusbserial5A470211841` did not write because the board did not enter bootloader: `Failed to connect to ESP32-P4: No serial data received`.
+
+Interpretation: the code path is ready in the normal lab firmware, but no PPA result has been collected yet. Do not keep retrying flash from Codex until the board is known to be in a normal flashable state.
+
+2026-05-11: Collected PPA SRM benchmark evidence from normal lab firmware.
+
+Setup:
+
+- Normal probe firmware was rebuilt with console/control on native USB Serial/JTAG.
+- Flash succeeded over `/dev/cu.usbmodem1432201`.
+- After manual reset, the app protocol enumerated as `/dev/cu.usbmodem14401`.
+- `PING` returned `{"ok":true,"response":"PONG"}`.
+
+Command:
+
+```sh
+source /Users/nene/esp/v5.5/esp-idf/export.sh
+python host/collect_ppa_srm_bench.py \
+  --port /dev/cu.usbmodem14401 \
+  --frames 120 \
+  --timeout-s 30 \
+  --echo \
+  --reset-input
+```
+
+Result:
+
+```json
+{"command":"PPA_SRM_SCALE2X_BENCH","fps":149.715,"avg_us":6679.3,"target_rate_met":true,"error":"none"}
+{"command":"CPU_SCALE2X_BENCH","fps":80.510,"avg_us":12420.8,"target_rate_met":true,"error":"none"}
+```
+
+Artifact:
+
+- `captures/benchmarks/ppa_srm/20260511T201252Z-ppa-srm-bench/`
+
+Interpretation: PPA SRM is useful for production scaling. For the synthetic `160x144 RGB565 -> 320x288 RGB565` case, it is about `1.86x` faster than the CPU scaler and comfortably exceeds the GBC frame-rate budget. This removes CPU scaling as the main obstacle for 2x output. The remaining production display bottleneck is still destination bandwidth and integration with the source frame ring.
+
+2026-05-11: Flashed PPA-backed 2x production mirror to the SPI LCD path.
+
+Purpose: move the verified PPA SRM scaler from a lab benchmark into a production firmware path that drives the connected SPI LCD without the browser workbench in the hot path.
+
+Changes:
+
+- Added production compile-time mode `PRODUCTION_MIRROR_MODE=3`.
+- The mode captures the GBC source as RGB565, copies the visible `160x144` region into a contiguous DMA-capable PPA source buffer, uses PPA SRM to scale to `320x288`, and draws that buffer using the existing known-good SPI LCD RGB666 destination path.
+- The mode is intentionally synchronous for the first integration test. It does not yet overlap capture, PPA scaling, and SPI drawing.
+
+Verification:
+
+- `PRODUCTION_MIRROR_MODE=3 ./scripts/build_production_mirror.sh` passed.
+- `PRODUCTION_MIRROR_MODE=3 ./scripts/flash_production_mirror.sh /dev/cu.usbmodem14401` passed.
+- A short post-flash serial read while the GBC was off received no production metrics.
+- After the GBC was powered on, `/dev/cu.usbmodem14401` produced stable production metrics:
+
+```json
+{"mode":"production_mirror_ppa_2x_sync","frames":6,"fps_x1000":5972,"avg_capture_us":41789,"avg_crop_us":1564,"avg_ppa_us":8222,"avg_draw_us":115619,"capture_failures":0,"ppa_failures":0,"draw_failures":0,"capture_error":"none","ppa_error":"none","draw_error":"none"}
+```
+
+Interpretation: the production LCD firmware image is on the ESP32-P4 and the PPA integration is running without capture/PPA/draw errors. This test should be judged as PPA integration evidence, not as a fast production destination. The `320x288` SPI draw takes about `115.6 ms`, so destination bandwidth dominates the `5.97 fps` result. PPA scaling itself takes about `8.2 ms`, which is inside the GBC frame budget.
+
+2026-05-11: Measured PPA 1x production pass-through overhead.
+
+Purpose: quantify the cost of running a real captured frame through PPA without changing output size. This is relevant for later hardware mirror/rotate/color processing where the destination may still be `160x144`.
+
+Changes:
+
+- Added production compile-time mode `PRODUCTION_MIRROR_MODE=4`.
+- The mode captures RGB565, copies the visible `160x144` region into a contiguous DMA-capable PPA source buffer, runs PPA SRM at `scale_x=1.0` and `scale_y=1.0`, then draws the result through the known-good RGB666 SPI LCD destination path.
+- Updated `scripts/build_production_mirror.sh` and `scripts/flash_production_mirror.sh` to run `idf.py reconfigure` before build/flash. This prevents stale CMake cache behavior when changing `PRODUCTION_MIRROR_MODE`.
+
+Verification:
+
+- Initial `PRODUCTION_MIRROR_MODE=4` build in the old build directory still flashed mode `3`, proving the stale-cache risk.
+- A dedicated build directory was used for the valid test:
+
+```sh
+BUILD_DIR=build_production_mirror_m4 PRODUCTION_MIRROR_MODE=4 ./scripts/build_production_mirror.sh
+BUILD_DIR=build_production_mirror_m4 PRODUCTION_MIRROR_MODE=4 ./scripts/flash_production_mirror.sh /dev/cu.usbmodem14401
+```
+
+Representative result:
+
+```json
+{"mode":"production_mirror_ppa_1x_sync","frames":15,"fps_x1000":14931,"avg_capture_us":34768,"avg_crop_us":1453,"avg_ppa_us":5248,"avg_draw_us":25395,"capture_failures":0,"ppa_failures":0,"draw_failures":0,"capture_error":"none","ppa_error":"none","draw_error":"none"}
+```
+
+Interpretation: PPA 1x pass-through costs about `5.25 ms` for a real `160x144 RGB565` frame. This is acceptable for future hardware transforms when needed, but pure 1x output should bypass PPA because it adds one memory-processing stage without improving the image. The current PPA 1x production mode remains limited by the older synchronous capture path and the `~25.4 ms` SPI RGB666 draw.
+
+Follow-up visual observation:
+
+- User reported the PPA 1x output has glitchy pixels.
+
+Updated interpretation: the PPA 1x path is valid as a timing measurement, but it is not yet image-quality validated. Do not use it as the production visual baseline until the artifact source is isolated. Suspects include source crop/stride assumptions, cache synchronization/PSRAM coherency, or PPA SRM behavior at `1.0x`. Restore the known-good no-PPA 1x path after this measurement.
+
+2026-05-11: Added and flashed production source-ring capture + PPA 2x + SPI LCD output.
+
+Purpose: test the architecture the project actually needs next: use the fastest proven source capture path, use PPA for scaling, and avoid CPU geometric scaling before the LCD.
+
+Changes:
+
+- Added `lcdcam_raw_ring_capture_loop()` to expose completed DMA ring frames to production code instead of only reporting source-ring counters.
+- Added production compile-time mode `PRODUCTION_MIRROR_MODE=5`.
+- The source side captures native visible `160x144 RGB565` frames through `lcdcam_raw_ring_capture_loop`.
+- The capture callback only copies the completed DMA slot into a DMA-capable processing buffer and returns the slot to the ring.
+- A separate draw task runs PPA SRM `2x` and sends the already-scaled `320x288` output to the existing SPI LCD draw path.
+- The metrics explicitly report `"cpu_scaling": false` and `"source_path":"lcdcam_raw_ring_capture_loop"`.
+
+Verification:
+
+```sh
+PRODUCTION_MIRROR_MODE=5 ./scripts/build_production_mirror.sh
+PRODUCTION_MIRROR_MODE=5 ./scripts/flash_production_mirror.sh /dev/cu.usbmodem14401
+```
+
+Build result: passed without warnings after cleaning mode-specific unused functions.
+
+Representative metrics:
+
+```json
+{"mode":"production_mirror_ring_ppa_2x","displayed":8,"captured":61,"copied":8,"fps_x1000":7999,"avg_capture_us":16520,"avg_copy_us":3016,"avg_ppa_us":8648,"avg_draw_us":116166,"max_capture_us":16602,"max_copy_us":7048,"max_ppa_us":9992,"max_draw_us":116265,"dropped_frames":53,"capture_failures":0,"ppa_failures":0,"draw_failures":0,"cpu_scaling":false,"source_path":"lcdcam_raw_ring_capture_loop","capture_error":"none","ppa_error":"none","draw_error":"none"}
+```
+
+Interpretation: this is the first correct production architecture test combining the fast source-ring capture path with PPA and LCD output. The source capture now runs at GBC frame-rate class, around `16.5 ms` per native visible frame. PPA scaling takes about `8.3-9.0 ms`. The SPI LCD destination still takes about `116 ms` per `320x288` RGB666 draw, so it dominates output FPS and forces frame dropping. There is no CPU geometric scaling in this path; the CPU still performs frame handoff copying and the existing destination color expansion required by the RGB666 SPI panel path.
+
+2026-05-11: Flashed true 1x source-ring + PPA + LCD production mode.
+
+Reason: user observed that the previous source-ring + PPA production test was visibly 2x and showed a slow side/down scrolling drift. A 1x test is needed to separate output scale from source-ring frame phase.
+
+Changes:
+
+- Added `PRODUCTION_MIRROR_MODE=6`.
+- Mode name: `production_mirror_ring_ppa_1x`.
+- Uses the same `lcdcam_raw_ring_capture_loop` source path as mode `5`.
+- Uses PPA SRM at `scale_x=1.0` and `scale_y=1.0`.
+- Keeps `"cpu_scaling": false` in the runtime metrics.
+
+Verification:
+
+```sh
+PRODUCTION_MIRROR_MODE=6 ./scripts/build_production_mirror.sh
+PRODUCTION_MIRROR_MODE=6 ./scripts/flash_production_mirror.sh /dev/cu.usbmodem14401
+```
+
+Representative result:
+
+```json
+{"mode":"production_mirror_ring_ppa_1x","displayed":33,"captured":62,"copied":33,"fps_x1000":32075,"avg_capture_us":16537,"avg_copy_us":3376,"avg_ppa_us":5716,"avg_draw_us":25392,"max_capture_us":16600,"max_copy_us":6874,"max_ppa_us":7086,"max_draw_us":25459,"dropped_frames":29,"capture_failures":0,"ppa_failures":0,"draw_failures":0,"cpu_scaling":false,"source_path":"lcdcam_raw_ring_capture_loop","capture_error":"none","ppa_error":"none","draw_error":"none"}
+```
+
+Interpretation: this is now a 1x source-ring + PPA + LCD test. The source captures near 60 fps, while the SPI LCD 1x destination consumes around 32 fps. If the user still sees slow scrolling in this mode, the problem is likely frame/line phase in the ring image-producing path rather than output scale or CPU scaling.
+
+2026-05-11: Flashed stream-geometry 1x source-ring + PPA + LCD production mode.
+
+Reason: user reported that mode `6` was truly 1x but still slowly scrolled down. Because the browser/lab reconstruction previously used a `161x145` stream model with a `160x144` visible crop, a production mode was added to test that stream geometry directly.
+
+Changes:
+
+- Added `PRODUCTION_MIRROR_MODE=7`.
+- Mode name: `production_mirror_ring_stream_ppa_1x`.
+- Captures `161x145 RGB565` through `lcdcam_raw_ring_capture_loop`.
+- Copies only the visible `160x144` region into the PPA handoff buffer.
+- Keeps PPA at `1.0x` and reports `"cpu_scaling": false`.
+- Fixed a DMA/cache coherency bug found by this mode: `161x145x2` is not cache-line aligned, so DMA backing buffers now allocate/cache-sync a padded length while descriptors and LCD_CAM byte-count EOF still use the true frame byte count.
+
+Verification:
+
+```sh
+PRODUCTION_MIRROR_MODE=7 ./scripts/build_production_mirror.sh
+PRODUCTION_MIRROR_MODE=7 ./scripts/flash_production_mirror.sh /dev/cu.usbmodem14401
+```
+
+Representative corrected result:
+
+```json
+{"mode":"production_mirror_ring_stream_ppa_1x","displayed":33,"captured":61,"copied":33,"fps_x1000":32271,"avg_capture_us":16742,"avg_copy_us":3390,"avg_ppa_us":5544,"avg_draw_us":25370,"dropped_frames":28,"capture_failures":0,"ppa_failures":0,"draw_failures":0,"cpu_scaling":false,"source_path":"lcdcam_raw_ring_capture_loop","capture_width":161,"capture_height":145,"visible_width":160,"visible_height":144}
+```
+
+Interpretation: mode `7` removes the cache-sync error and keeps the source at about one frame per `16.74 ms`, but visual validation is still required. If the image still scrolls, the remaining issue is most likely continuous-ring frame/line phase rather than output scaling, CPU scaling, or cache coherency.
+
+2026-05-11: Added a deterministic GBC alignment test ROM.
+
+Reason: the Game Boy boot screen is useful for first proof-of-image, but it is a poor diagnostic pattern once the remaining errors are subtle. Repeated letters, black-pixel noise, row slip, and stride mistakes need a known pixel pattern.
+
+Changes:
+
+- Installed RGBDS `1.0.1` through Homebrew.
+- Added `tools/gbc_test_rom/`.
+- Added `generate_alignment_rom.py`, which generates RGBDS assembly for a GBC-only test ROM.
+- Added a `Makefile` that builds `build/p4_align.gbc`.
+
+Pattern contents:
+
+- Unique colored 2x2 tile corner blocks.
+- Full-screen white border.
+- Top-row color bars.
+- Vertical stripe field.
+- Horizontal stripe field.
+- Checkerboard field.
+- Center crosshair.
+- Diagonal reference tiles.
+- GBC background palettes for red, green, blue, yellow, cyan, magenta, grayscale, and white.
+
+Verification:
+
+```sh
+cd tools/gbc_test_rom
+make
+```
+
+Result:
+
+```text
+build/p4_align.gbc
+32768 bytes
+```
+
+Interpretation: this ROM should be used for the next GBC-source debugging pass. It gives known visual anchors for orientation, color channel order, row stride, byte/pixel phase, and frame-boundary mistakes without depending on commercial ROM content.
+
+2026-05-11: Promoted ROM-derived GBC source alignment into the source module.
+
+Reason: the alignment ROM showed that the stable RGB565 stream was not random LCD/SPI corruption. The raw captured top rows classified as `12 red + 128 white + 17 green + 4 red`, while the ROM expects `16 red + 128 white + 16 green`. A host-side linear shift of `-4` pixels over the `161x145` stream produced the expected row geometry after the first captured pixels.
+
+Evidence:
+
+- `captures/decoded/rom_alignment/source_frame_rgb565.bin`
+- `captures/decoded/rom_alignment/source_frame_161x145.png`
+- `captures/decoded/rom_alignment/source_frame_shift_-4_160x144.png`
+- Freeze-frame LCD test with the same shift produced a stable, visually correct ROM image.
+
+Implementation:
+
+- Added `GBC_LCD_SOURCE_VISIBLE_LINEAR_SHIFT_PIXELS = -4`.
+- Added `gbc_lcd_source_copy_visible_rgb565()`.
+- Production mirror output now draws the corrected `160x144` visible frame from the GBC source module instead of using production-only compile flags.
+- Host live rendering now applies the same source alignment.
+
+Current understanding:
+
+- Reliable capture window remains `192x145`.
+- Exported source stream remains `161x145 RGB565` (`46690` bytes).
+- Correct visible frame is `160x144 RGB565` after a `-4` linear stream shift.
+- The first four pixels of the first frame are not present in the current per-frame capture; display code clamps those pixels to the first captured pixel. This is acceptable as a documented compatibility fix, but a future persistent capture driver should arm early enough to remove that edge repair.
+
+2026-05-12 update: optimized direct SPI LCD output so the `-4` visible-frame phase is applied inside the existing RGB565-to-panel conversion loop instead of first copying a corrected `160x144` intermediate frame.
+
+Result:
+
+```json
+{"mode":"production_mirror_freeze_frame","frames":25,"fps_x1000":25000,"avg_draw_us":39978,"draw_failures":0,"source_stream_width":161,"source_visible_shift_pixels":-4}
+```
+
+Interpretation: the direct LCD path keeps the measured source alignment while avoiding a separate full-frame visible-copy pass. The `-4` correction is still a compatibility alignment, but it no longer costs an extra `160x144` RGB565 copy before SPI output. PPA/scaling paths may still need a contiguous corrected source buffer until they are separately optimized.
+
+2026-05-12 update: tested production-oriented source-to-SPI LCD throughput using raw SPI and ring capture.
+
+Reason: the previous production mirror path was limited to about `25 fps`, which was not consistent with the ESP32-P4 peripheral capabilities. The test separated LCD transfer cost from source capture cost.
+
+Changes:
+
+- Added build-time overrides for `DEST_SPI_LCD_PCLK_HZ`, `DEST_SPI_LCD_RAW_SPI`, and `PRODUCTION_CAPTURE_WINDOW_FRAMES`.
+- Added production mode `9`, a ring-direct source-to-LCD path.
+- Enabled raw SPI destination mode using `SPI_CLK_SRC_SPLL`, because the `esp_lcd` SPI wrapper uses the default ESP32-P4 SPI clock source. With the default XTAL source, the driver rejects `40 MHz` as invalid; raw SPI with SPLL accepts it.
+- Switched production 1x LCD output to panel RGB565 mode, keeping the source in RGB565 and avoiding RGB565-to-RGB666 expansion.
+
+Best stable result so far:
+
+```json
+{"mode":"production_mirror_ring_direct_1x","displayed":45,"captured":45,"fps_x1000":44634,"avg_capture_us":19950,"avg_draw_us":13255,"max_capture_us":20764,"max_draw_us":13304,"dropped_frames":0,"capture_failures":0,"draw_failures":0,"source_stream_width":161,"source_visible_shift_pixels":-4,"capture_error":"none","draw_error":"none"}
+```
+
+Interpretation:
+
+- LCD draw is no longer the main limiter: raw `40 MHz` SPI draws one corrected `160x144` RGB565 frame in about `13.26 ms`.
+- The stable live pipeline is currently about `43-44.6 fps`.
+- Source capture is now the limiter in the stable path, with about `19.95 ms` between captured frames.
+- A `161x145` ring-capture experiment produced frame intervals near `16.8 ms`, matching the expected GBC-class cadence, but the ring stopped after 7 frames and timed out. This is promising but not stable enough to leave flashed.
+
+Next evidence needed:
+
+- Fix continuous ring descriptor rearming or EOF handling so the `161x145` source stream can run indefinitely at the measured `~16.8 ms` cadence.
+- Once stable, retest raw SPI draw plus `161x145` source capture. That is the path most likely to reach the console frame rate without scaling.

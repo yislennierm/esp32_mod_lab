@@ -18,6 +18,7 @@ typedef enum {
     LCDCAM_RAW_START_IMMEDIATE = 0,
     LCDCAM_RAW_START_AFTER_SPS_RISING = 1,
     LCDCAM_RAW_START_AFTER_SPS_THEN_SPL_FALLING = 2,
+    LCDCAM_RAW_START_AFTER_SPS_FALLING = 3,
 } lcdcam_raw_start_mode_t;
 
 typedef enum {
@@ -94,6 +95,51 @@ typedef struct {
     lcdcam_raw_data_mode_t data_mode;
 } lcdcam_raw_rearm_stats_t;
 
+typedef struct {
+    uint32_t requested_frames;
+    uint32_t completed_frames;
+    uint32_t dropped_frames;
+    uint32_t timeout_ms;
+    uint32_t h_res;
+    uint32_t v_res;
+    uint32_t bytes_per_sample;
+    uint32_t frame_bytes;
+    uint32_t checksum;
+    uint32_t buffer_slots;
+    int64_t elapsed_us;
+    int64_t first_frame_us;
+    int64_t avg_frame_interval_us;
+    int64_t max_frame_interval_us;
+    bool start_trigger_seen;
+    esp_err_t last_esp_err;
+    const char *failure_stage;
+    lcdcam_raw_data_mode_t data_mode;
+} lcdcam_raw_ctlr_stats_t;
+
+typedef struct {
+    uint32_t requested_frames;
+    uint32_t completed_frames;
+    uint32_t timeout_ms;
+    uint32_t h_res;
+    uint32_t v_res;
+    uint32_t bytes_per_sample;
+    uint32_t frame_bytes;
+    uint32_t checksum;
+    uint32_t ring_slots;
+    uint32_t descriptor_count_per_slot;
+    uint32_t ring_rearms;
+    uint32_t ring_rearm_failures;
+    uint32_t unknown_eof_desc;
+    int64_t elapsed_us;
+    int64_t first_frame_us;
+    int64_t avg_frame_interval_us;
+    int64_t max_frame_interval_us;
+    bool start_trigger_seen;
+    esp_err_t last_esp_err;
+    const char *failure_stage;
+    lcdcam_raw_data_mode_t data_mode;
+} lcdcam_raw_ring_stats_t;
+
 esp_err_t lcdcam_raw_capture(lcdcam_raw_de_source_t de_source,
                              uint32_t h_res,
                              uint32_t v_res,
@@ -134,6 +180,48 @@ esp_err_t lcdcam_raw_rearm_bench(lcdcam_raw_de_source_t de_source,
                                  lcdcam_raw_data_mode_t data_mode,
                                  uint32_t chunk_count,
                                  lcdcam_raw_rearm_stats_t *stats);
+esp_err_t lcdcam_raw_ctlr_bench(lcdcam_raw_de_source_t de_source,
+                                uint32_t h_res,
+                                uint32_t v_res,
+                                uint32_t timeout_ms,
+                                bool vsync_invert,
+                                bool de_invert,
+                                bool pclk_invert,
+                                bool byte_count_eof,
+                                lcdcam_raw_start_mode_t start_mode,
+                                bool vh_de_mode,
+                                lcdcam_raw_data_mode_t data_mode,
+                                uint32_t frame_count,
+                                lcdcam_raw_ctlr_stats_t *stats);
+esp_err_t lcdcam_raw_ring_bench(lcdcam_raw_de_source_t de_source,
+                                uint32_t h_res,
+                                uint32_t v_res,
+                                uint32_t timeout_ms,
+                                bool vsync_invert,
+                                bool de_invert,
+                                bool pclk_invert,
+                                bool byte_count_eof,
+                                lcdcam_raw_start_mode_t start_mode,
+                                bool vh_de_mode,
+                                lcdcam_raw_data_mode_t data_mode,
+                                uint32_t frame_count,
+                                lcdcam_raw_ring_stats_t *stats);
+esp_err_t lcdcam_raw_ring_capture_loop(lcdcam_raw_de_source_t de_source,
+                                       uint32_t h_res,
+                                       uint32_t v_res,
+                                       uint32_t timeout_ms,
+                                       bool vsync_invert,
+                                       bool de_invert,
+                                       bool pclk_invert,
+                                       bool byte_count_eof,
+                                       lcdcam_raw_start_mode_t start_mode,
+                                       bool vh_de_mode,
+                                       lcdcam_raw_data_mode_t data_mode,
+                                       uint32_t frame_count,
+                                       lcdcam_raw_frame_callback_t frame_callback,
+                                       void *callback_user_data,
+                                       lcdcam_raw_ring_stats_t *stats);
 void lcdcam_raw_result_free(lcdcam_raw_result_t *result);
+void lcdcam_raw_set_loop_summary_enabled(bool enabled);
 esp_err_t lcdcam_raw_enter_safe_idle(void);
 esp_err_t lcdcam_raw_enter_electrical_isolate(void);

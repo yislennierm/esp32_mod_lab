@@ -13,9 +13,6 @@
 static const char *TAG = "gpio_sampler";
 
 static const gpio_num_t PHASE1_TEST_GPIO_ALLOWLIST[] = {
-    GPIO_NUM_7,
-    GPIO_NUM_8,
-    GPIO_NUM_9,
     GPIO_NUM_10,
     GPIO_NUM_11,
     GPIO_NUM_12,

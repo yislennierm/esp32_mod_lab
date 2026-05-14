@@ -30,6 +30,20 @@ Confidence level: medium for the firmware build; low for the current board cabli
 
 ## Experiment Results
 
+2026-05-11:
+
+- The TinyUSB benchmark firmware built successfully.
+- It flashed successfully through `/dev/cu.wchusbserial5A470211841`.
+- UART boot logs showed:
+  - `TinyUSB transport benchmark starting; no GPIO or LCD_CAM setup is performed`
+  - `TinyUSB Driver installed`
+  - `TinyUSB CDC ACM ready`
+- macOS USB enumeration only showed the WCH USB serial bridge (`1a86:55d3`, serial `5A47021184`).
+- No separate Espressif/TinyUSB CDC device (`303a:4001`) was visible in `system_profiler`/`ioreg`.
+- `PING` on `/dev/cu.usbmodem5A470211841` did not receive JSON.
+
+Interpretation: the TinyUSB firmware initializes internally, but the currently connected USB-C setup still does not expose a usable TinyUSB CDC data path to macOS. For this board/cabling, USB output is blocked on identifying the ESP32-P4 USB-OTG device connector or D+/D- routing, not on source capture performance.
+
 2026-05-10:
 
 - `scripts/build_tinyusb_bench.sh` built successfully.

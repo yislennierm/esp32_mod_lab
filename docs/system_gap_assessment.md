@@ -12,7 +12,7 @@ Current project state:
 
 - Strongest area: GBC source investigation and live source monitor.
 - Emerging area: target profile, browser workbench, artifact preservation.
-- Weakest areas: destination profiles, processing block architecture, product-mode configuration, formal manifests, automated hypothesis comparison.
+- Weakest areas: ESP32-P4 internal dataflow benchmarks, destination profiles, processing block architecture, product-mode configuration, formal manifests, automated hypothesis comparison.
 
 Confidence level: high for this gap assessment based on current repo structure and docs.
 
@@ -45,7 +45,8 @@ Confidence level: high for this gap assessment based on current repo structure a
 | Raw capture | Working with LCD_CAM for GBC | Needs backend abstraction and manifest format implementation | High |
 | Hypothesis decoding | Many scripts and browser controls exist | Needs generic hypothesis engine and saved profiles | High |
 | Live monitor | Working for GBC | Needs source-present/source-lost cleanup and preset management | High |
-| Processing blocks | Conceptual only | Needs firmware block interfaces and telemetry contracts | Medium |
+| ESP32-P4 internal dataflow | Partially proven with synthetic pipeline and production overlap | Needs persistent source capture, frame ring, PPA, DMA2D, and sink benchmarks | High |
+| Processing blocks | Conceptual only | Needs firmware block interfaces and telemetry contracts | High |
 | Destination profiles | Not started | Needs first destination selection and profile schema | Medium |
 | Product profiles | Not started | Needs source-processing-destination binding model | Medium |
 | Artifact manifests | Drafted only | Needs implementation in capture tools | High |
@@ -81,6 +82,9 @@ Recommended next firmware direction:
 
 - keep existing command names as compatibility aliases
 - introduce a GBC LCD source-driver module as the performance path after preserving the current live baseline
+- add persistent LCD_CAM/GDMA source-ring benchmark before more visual output tuning
+- add a common benchmark result structure for source, ring, processing, and sink tests
+- benchmark PPA and DMA2D with synthetic frames before adding product transforms
 - add generic command names where useful, for example `MEASURE_CLOCK`
 - define a block status structure used by capture, processing, and future output blocks
 - add explicit source-present/source-lost status for live capture

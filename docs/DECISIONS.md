@@ -4,7 +4,7 @@ Purpose: record important project decisions and the reason behind them.
 
 Status: canonical. Add entries when a decision changes architecture, wiring, safety, commands, or workflow.
 
-Last updated: 2026-05-10.
+Last updated: 2026-05-11.
 
 ## Decision Format
 
@@ -269,4 +269,71 @@ Related:
 
 - `docs/dual_transport_strategy.md`
 - `docs/capture_pipeline.md`
+- `docs/firmware_recovery_workflow.md`
+
+## 2026-05-10: Lab Firmware And Production Firmware Are Separate Modes
+
+Status: active.
+
+Decision: the browser-controlled lab instrument and the direct source-to-destination production path are separate compile-time firmware modes for now.
+
+Reason: the lab image needs command handling, browser integration, pin manipulation, and verbose instrumentation. The production image needs a minimal hot path to measure what the ESP32-P4 can do as an embedded bridge. Mixing both into one runtime mode would make performance interpretation and safety behavior less clear.
+
+Consequences:
+
+- Normal lab firmware is built with `scripts/build_probe_firmware.sh`.
+- Early production GBC-to-SPI mirror firmware is built with `scripts/build_production_mirror.sh`.
+- Production mirror does not start the browser workbench protocol.
+- Production mirror currently preserves source geometry and performs only RGB565-to-RGB666 conversion.
+- Future production modes should be added through an explicit profile or registry rather than hidden command flags.
+
+Related:
+
+- `docs/production_modes.md`
+- `firmware/main/production_mirror.c`
+- `scripts/build_production_mirror.sh`
+- `scripts/flash_production_mirror.sh`
+
+## 2026-05-11: Hardware-Block Research Starts In Isolated Experiment Firmware
+
+Status: active.
+
+Decision: risky or performance-critical ESP32-P4 hardware-block research starts as a separate ESP-IDF project under `experiments/`, not inside the full browser-controlled lab firmware.
+
+Reason: the lab image contains command parsing, browser streaming, pin tooling, destination code, historical compatibility paths, and debugging behavior. Those are useful for investigation, but they can contaminate performance results and can make hardware bring-up harder to debug. The TinyUSB/high-speed USB work showed that testing a new transport inside the full lab context makes it too easy to confuse board routing, firmware mode, stdio, USB Serial/JTAG, TinyUSB, and host tooling.
+
+Consequences:
+
+- New hardware-block claims must be proven in this order: isolated experiment firmware, measured JSON evidence, lab/UI integration, then production profile.
+- The lab firmware may contain compatibility benchmark commands, but they are not the highest-confidence proof for a hardware block.
+- Isolated experiment apps should exclude unrelated modules explicitly in their README and JSON output.
+- A successful experiment can graduate into the lab workbench only after its hot path and counters are understood.
+- A successful experiment can graduate into production only after it is combined with other already-proven blocks.
+
+Related:
+
+- `experiments/source_ring_bench/`
+- `experiments/tinyusb_bench/`
+- `docs/platform/esp32p4_internal_dataflow_plan.md`
+- `docs/esp32p4_modder_research_plan.md`
+
+## 2026-05-11: Standalone Experiment Firmware Is Not The Default Flash Path
+
+Status: active.
+
+Decision: standalone experiment firmware may be built for compile evidence, but it must not be flashed by default on the active development board unless the experiment has a recovery-safe plan and an explicit override.
+
+Reason: the standalone PPA SRM benchmark used its own ESP-IDF project and sdkconfig. Repeated attempts around that path forced manual recovery on the current ESP32-P4 board. That is not acceptable for the normal research loop, especially when the normal lab firmware already contains a proven command/response path and a proven source-ring benchmark command.
+
+Consequences:
+
+- `scripts/flash_ppa_srm_bench.sh` now refuses to flash unless `ALLOW_EXPERIMENTAL_PPA_FLASH=1` is set.
+- Hardware-block benchmarks that do not need special boot/USB behavior should first be added as no-I/O commands inside the known-good lab firmware.
+- Separate full-device experiment apps remain useful only when the feature being tested cannot be isolated inside the lab firmware.
+- Before flashing a standalone app, record the recovery path, expected serial port, console behavior, and post-flash smoke test.
+
+Related:
+
+- `experiments/ppa_srm_bench/`
+- `scripts/flash_ppa_srm_bench.sh`
 - `docs/firmware_recovery_workflow.md`

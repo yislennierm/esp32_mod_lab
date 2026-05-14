@@ -300,16 +300,18 @@ class LiveLcdcamState:
     def _wait_for_source(self) -> bool:
         while not self._capture_stop.is_set() and self._source_state == "no_signal":
             try:
-                dclk = self.count_gpio_edges(22, 5)
+                dclk = self.measure_clock(22, 20)
+                dclk_hz = float(dclk.get("rising_edge_hz", 0.0) or 0.0)
                 dclk_edges = int(dclk.get("rising_edges", 0) or 0)
                 probe = {
-                    "dclk_edges_5ms": dclk_edges,
+                    "dclk_edges_20ms": dclk_edges,
+                    "dclk_hz": dclk_hz,
                     "checked_ms": int(time.monotonic() * 1000),
                 }
                 with self._lock:
                     self._source_last_probe = probe
                     self._latest_metadata = {"ok": False, "source_state": "no_signal", "error": "source not present; waiting for DCLK", **probe}
-                if dclk_edges > 20:
+                if dclk_hz > 10000.0:
                     with self._lock:
                         self._source_state = "clock_detected"
                         self._latest_error = ""
@@ -772,16 +774,23 @@ def crop_rgb16_visible(payload: bytes,
                        stream_width: int,
                        stream_height: int,
                        visible_width: int,
-                       visible_height: int) -> bytes:
+                       visible_height: int,
+                       linear_shift_pixels: int = -4) -> bytes:
     row_bytes = stream_width * 2
     visible_row_bytes = visible_width * 2
     if len(payload) < row_bytes * stream_height:
         raise ValueError("short RGB16 payload for visible crop")
     cropped = bytearray(visible_row_bytes * visible_height)
     for y in range(visible_height):
-        src = y * row_bytes
-        dst = y * visible_row_bytes
-        cropped[dst:dst + visible_row_bytes] = payload[src:src + visible_row_bytes]
+        for x in range(visible_width):
+            src_pixel = y * stream_width + x + linear_shift_pixels
+            dst = (y * visible_width + x) * 2
+            if src_pixel < 0:
+                cropped[dst:dst + 2] = payload[0:2]
+            else:
+                src = src_pixel * 2
+                if src + 2 <= len(payload):
+                    cropped[dst:dst + 2] = payload[src:src + 2]
     return bytes(cropped)
 
 
@@ -906,6 +915,118 @@ def load_profile(profile_path: str) -> dict[str, Any]:
         return json.load(handle)
 
 
+def save_destination_profile(
+    profile_path: str,
+    destination_profile: dict[str, Any],
+    pin_mapping: list[dict[str, Any]],
+    destination_settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    path = Path(profile_path)
+    if not path.exists() or not path.is_file():
+        raise ValueError("destination_profile_not_found")
+    connector = destination_profile.setdefault("connector", {})
+    pins = connector.setdefault("pins", [])
+    existing_by_name = {
+        str(pin.get("name")): pin
+        for pin in pins
+        if isinstance(pin, dict) and pin.get("name") is not None
+    }
+    next_pins: list[dict[str, Any]] = []
+    for item in pin_mapping:
+        if not isinstance(item, dict):
+            raise ValueError("pin_mapping_item_invalid")
+        name = str(item.get("panel_pin", "")).strip()
+        role = str(item.get("role", "")).strip()
+        gpio_value = item.get("esp32p4_gpio")
+        notes = str(item.get("notes", ""))
+        if not name or any(ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_/-" for ch in name):
+            raise ValueError("invalid_panel_pin")
+        if not role:
+            raise ValueError("invalid_role")
+        if gpio_value is not None:
+            if not isinstance(gpio_value, int) or gpio_value < 0 or gpio_value > 54:
+                raise ValueError("invalid_gpio")
+        base = dict(existing_by_name.get(name, {}))
+        base.update({
+            "name": name,
+            "role": role,
+            "esp32p4_gpio": gpio_value,
+            "notes": notes,
+        })
+        next_pins.append(base)
+
+    connector["pins"] = next_pins
+    connector["pin_count"] = len(next_pins)
+    destination_profile["status"] = "draft_wired" if any(pin.get("esp32p4_gpio") is not None for pin in next_pins) else "draft_unwired"
+
+    gpio_by_name = {str(pin["name"]): pin.get("esp32p4_gpio") for pin in next_pins}
+    signals = destination_profile.get("signals", {})
+    for signal in signals.get("timing_or_control", []):
+        if isinstance(signal, dict) and signal.get("name") in gpio_by_name:
+            signal["current_esp32p4_gpio"] = gpio_by_name[str(signal["name"])]
+    pixel_bus = signals.get("pixel_bus", {})
+    if isinstance(pixel_bus, dict):
+        data_signal = pixel_bus.get("data_signal")
+        if isinstance(data_signal, dict) and data_signal.get("name") in gpio_by_name:
+            data_signal["current_esp32p4_gpio"] = gpio_by_name[str(data_signal["name"])]
+
+    if destination_settings is not None:
+        if not isinstance(destination_settings, dict):
+            raise ValueError("destination_settings_invalid")
+        destination = destination_profile.setdefault("destination", {})
+        controller_ic = destination_settings.get("controller_ic")
+        if controller_ic is not None:
+            controller_ic = str(controller_ic).strip()
+            destination["controller_ic"] = None if controller_ic in {"", "unknown"} else controller_ic
+        resolution = destination_settings.get("native_resolution")
+        if resolution is not None:
+            if not isinstance(resolution, dict):
+                raise ValueError("native_resolution_invalid")
+            width = resolution.get("width")
+            height = resolution.get("height")
+            if width is None or height is None:
+                destination["native_resolution"] = None
+            else:
+                if not isinstance(width, int) or not isinstance(height, int) or width < 1 or height < 1 or width > 4096 or height > 4096:
+                    raise ValueError("native_resolution_invalid")
+                destination["native_resolution"] = {"width": width, "height": height}
+        orientation = destination_settings.get("orientation")
+        if isinstance(orientation, dict):
+            target_orientation = destination.setdefault("orientation", {})
+            for key in ("swap_xy", "mirror_x", "mirror_y"):
+                if key in orientation:
+                    target_orientation[key] = bool(orientation[key])
+        color = destination_settings.get("color")
+        if isinstance(color, dict):
+            target_color = destination.setdefault("color", {})
+            if "color_order" in color:
+                color_order = str(color.get("color_order") or "unknown")
+                if color_order not in {"unknown", "rgb", "bgr"}:
+                    raise ValueError("color_order_invalid")
+                target_color["color_order"] = color_order
+            if "invert_color" in color:
+                target_color["invert_color"] = bool(color["invert_color"])
+        spi = destination_settings.get("spi")
+        if isinstance(spi, dict):
+            target_spi = destination.setdefault("spi", {})
+            int_fields = {
+                "pclk_hz_initial": (100000, 80000000),
+                "mode": (0, 3),
+                "cmd_bits": (8, 16),
+                "param_bits": (8, 16),
+                "max_transfer_lines_initial": (1, 512),
+            }
+            for key, (minimum, maximum) in int_fields.items():
+                if key in spi:
+                    value = spi[key]
+                    if not isinstance(value, int) or value < minimum or value > maximum:
+                        raise ValueError(f"{key}_invalid")
+                    target_spi[key] = value
+
+    path.write_text(json.dumps(destination_profile, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    return destination_profile
+
+
 def recent_artifacts(root: Path = Path("captures/experiments"), limit: int = 40) -> list[dict[str, Any]]:
     if not root.exists():
         return []
@@ -943,6 +1064,7 @@ def make_handler(
     continuous_capture: bool,
     profile: dict[str, Any],
     destination_profile: dict[str, Any],
+    destination_profile_path: str,
 ) -> type[BaseHTTPRequestHandler]:
     dist_dir = frontend_dist_dir()
     allowed_probe_commands = {
@@ -956,11 +1078,25 @@ def make_handler(
     }
     allowed_gpios = profile_gpio_set(profile)
     profile_gpio_list = profile_gpio_rows(profile)
+    source_gpio_owners = {
+        int(row["gpio"]): str(row["signal"])
+        for row in profile_gpio_list
+        if isinstance(row.get("gpio"), int)
+    }
     allowed_line_markers = {
         row["signal"]
         for row in profile_gpio_list
         if "line_marker_candidate" in row.get("role", "")
     } or {"LP", "SPL"}
+
+    def destination_signal(query: dict[str, list[str]]) -> str:
+        signal_name = (query.get("signal") or [""])[0].strip()
+        if not signal_name or any(ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_/-" for ch in signal_name):
+            raise ValueError("invalid_signal")
+        return signal_name
+
+    def destination_command(command: str) -> dict[str, Any]:
+        return state.probe_command(command)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: Any) -> None:
@@ -1018,6 +1154,33 @@ def make_handler(
             self.send_body(200, content_type, candidate.read_bytes())
             return True
 
+        def do_POST(self) -> None:
+            parsed = urlparse(self.path)
+            path = parsed.path
+            if path == "/api/destination-profile":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 64 * 1024:
+                        raise ValueError("invalid_content_length")
+                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                    pin_mapping = payload.get("pin_mapping")
+                    if not isinstance(pin_mapping, list):
+                        raise ValueError("pin_mapping_required")
+                    for pin in pin_mapping:
+                        gpio = pin.get("esp32p4_gpio") if isinstance(pin, dict) else None
+                        if gpio is not None and gpio in source_gpio_owners:
+                            raise ValueError(f"gpio_owned_by_source:{source_gpio_owners[gpio]}")
+                    saved = save_destination_profile(destination_profile_path, destination_profile, pin_mapping, payload.get("destination"))
+                    self.send_body(200, "application/json", json.dumps({
+                        "ok": True,
+                        "profile": saved,
+                        "path": destination_profile_path,
+                    }).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            self.send_body(404, "application/json", json.dumps({"ok": False, "error": "not_found"}).encode("utf-8"))
+
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             path = parsed.path
@@ -1033,6 +1196,170 @@ def make_handler(
                 return
             if path == "/api/destination-profile":
                 self.send_body(200, "application/json", json.dumps(destination_profile).encode("utf-8"))
+                return
+            if path == "/api/destination/gpio/status":
+                try:
+                    self.send_body(200, "application/json", json.dumps(destination_command("DEST_GPIO_STATUS")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(500, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/gpio/validate":
+                query = parse_qs(parsed.query)
+                try:
+                    signal_name = destination_signal(query)
+                    gpio = query_int(query, "gpio", -1, 0, 54)
+                    if gpio in source_gpio_owners:
+                        raise ValueError(f"gpio_owned_by_source:{source_gpio_owners[gpio]}")
+                    self.send_body(200, "application/json", json.dumps(
+                        destination_command(f"DEST_GPIO_VALIDATE {signal_name} {gpio}")
+                    ).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/gpio/claim":
+                query = parse_qs(parsed.query)
+                try:
+                    signal_name = destination_signal(query)
+                    gpio = query_int(query, "gpio", -1, 0, 54)
+                    if gpio in source_gpio_owners:
+                        raise ValueError(f"gpio_owned_by_source:{source_gpio_owners[gpio]}")
+                    self.send_body(200, "application/json", json.dumps(
+                        destination_command(f"DEST_GPIO_CLAIM {signal_name} {gpio}")
+                    ).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/gpio/set":
+                query = parse_qs(parsed.query)
+                try:
+                    signal_name = destination_signal(query)
+                    level = query_int(query, "level", -1, 0, 1)
+                    self.send_body(200, "application/json", json.dumps(
+                        destination_command(f"DEST_GPIO_SET {signal_name} {level}")
+                    ).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/gpio/pulse":
+                query = parse_qs(parsed.query)
+                try:
+                    signal_name = destination_signal(query)
+                    level = query_int(query, "level", 0, 0, 1)
+                    duration_ms = query_int(query, "duration_ms", 100, 1, 5000)
+                    self.send_body(200, "application/json", json.dumps(
+                        destination_command(f"DEST_GPIO_PULSE {signal_name} {level} {duration_ms}")
+                    ).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/gpio/release":
+                query = parse_qs(parsed.query)
+                try:
+                    signal_name = destination_signal(query)
+                    self.send_body(200, "application/json", json.dumps(
+                        destination_command(f"DEST_GPIO_RELEASE {signal_name}")
+                    ).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/status":
+                try:
+                    self.send_body(200, "application/json", json.dumps(destination_command("DEST_SPI_LCD_STATUS")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(500, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/init":
+                try:
+                    self.send_body(200, "application/json", json.dumps(destination_command("DEST_SPI_LCD_INIT")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(500, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/safe-off":
+                try:
+                    self.send_body(200, "application/json", json.dumps(destination_command("DEST_SPI_LCD_SAFE_OFF")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(500, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/test-pattern":
+                query = parse_qs(parsed.query)
+                try:
+                    pattern = (query.get("pattern") or ["orientation"])[0].strip()
+                    if pattern not in {"orientation", "color_bars"}:
+                        raise ValueError("invalid_pattern")
+                    self.send_body(200, "application/json", json.dumps(destination_command(f"DEST_SPI_LCD_TEST_PATTERN {pattern}")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(500, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/test-pattern565":
+                try:
+                    self.send_body(200, "application/json", json.dumps(destination_command("DEST_SPI_LCD_TEST_PATTERN565 color_bars")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(500, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/show-gbc-frame":
+                query = parse_qs(parsed.query)
+                try:
+                    timeout_ms = query_int(query, "timeout_ms", 300, 1, 5000)
+                    self.send_body(200, "application/json", json.dumps(destination_command(f"DEST_SPI_LCD_SHOW_GBC_FRAME {timeout_ms} 0")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(500, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/mirror-bench":
+                query = parse_qs(parsed.query)
+                try:
+                    frames = query_int(query, "frames", 10, 1, 120)
+                    timeout_ms = query_int(query, "timeout_ms", 300, 1, 5000)
+                    self.send_body(200, "application/json", json.dumps(destination_command(f"DEST_SPI_LCD_MIRROR_BENCH {frames} {timeout_ms} 0")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(500, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/madctl":
+                query = parse_qs(parsed.query)
+                try:
+                    value = (query.get("value") or ["08"])[0].strip()
+                    if len(value) > 2 or any(ch not in "0123456789abcdefABCDEF" for ch in value):
+                        raise ValueError("invalid_madctl_hex")
+                    self.send_body(200, "application/json", json.dumps(destination_command(f"DEST_SPI_LCD_SET_MADCTL {value}")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/signal-burst":
+                query = parse_qs(parsed.query)
+                try:
+                    duration_ms = query_int(query, "duration_ms", 5000, 100, 15000)
+                    self.send_body(200, "application/json", json.dumps(destination_command(f"DEST_SPI_LCD_SIGNAL_BURST {duration_ms}")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(500, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/clear":
+                query = parse_qs(parsed.query)
+                try:
+                    color = (query.get("color") or ["0000"])[0].strip()
+                    if len(color) > 4 or any(ch not in "0123456789abcdefABCDEF" for ch in color):
+                        raise ValueError("invalid_rgb565_hex")
+                    self.send_body(200, "application/json", json.dumps(destination_command(f"DEST_SPI_LCD_CLEAR {color}")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/clear565be":
+                query = parse_qs(parsed.query)
+                try:
+                    color = (query.get("color") or ["0000"])[0].strip()
+                    if len(color) > 4 or any(ch not in "0123456789abcdefABCDEF" for ch in color):
+                        raise ValueError("invalid_rgb565_hex")
+                    self.send_body(200, "application/json", json.dumps(destination_command(f"DEST_SPI_LCD_CLEAR565BE {color}")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/destination/spi/clear666":
+                query = parse_qs(parsed.query)
+                try:
+                    color = (query.get("color") or ["000000"])[0].strip()
+                    if len(color) > 6 or any(ch not in "0123456789abcdefABCDEF" for ch in color):
+                        raise ValueError("invalid_rgb888_hex")
+                    self.send_body(200, "application/json", json.dumps(destination_command(f"DEST_SPI_LCD_CLEAR666 {color}")).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
                 return
             if path == "/api/artifacts/recent":
                 self.send_body(200, "application/json", json.dumps({
@@ -1301,7 +1628,7 @@ def run(args: argparse.Namespace) -> int:
                             args.capture_timeout_ms)
     server = ThreadingHTTPServer(
         (args.listen_host, args.listen_port),
-        make_handler(state, args.interval_ms, args.continuous_capture, profile, destination_profile),
+        make_handler(state, args.interval_ms, args.continuous_capture, profile, destination_profile, args.destination_profile),
     )
 
     def stop(_signum: int, _frame: Any) -> None:

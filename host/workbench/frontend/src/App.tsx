@@ -19,18 +19,26 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography
 } from 'antd';
 import {
   ApartmentOutlined,
   ApiOutlined,
+  ArrowDownOutlined,
+  ArrowUpOutlined,
   BugOutlined,
+  CheckCircleOutlined,
   DatabaseOutlined,
   DesktopOutlined,
+  DisconnectOutlined,
   ExperimentOutlined,
   FileSearchOutlined,
   PlayCircleOutlined,
-  ProfileOutlined
+  PlusOutlined,
+  ProfileOutlined,
+  ReloadOutlined,
+  ThunderboltOutlined
 } from '@ant-design/icons';
 import { Application, Filter, GlProgram, Sprite, Texture } from 'pixi.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -45,6 +53,22 @@ type DestinationPinDraft = {
   role: string;
   gpio: number | null;
   notes: string;
+};
+
+type DestinationSettingsDraft = {
+  controller_ic: string;
+  width: number | null;
+  height: number | null;
+  pclk_hz_initial: number;
+  mode: number;
+  cmd_bits: number;
+  param_bits: number;
+  max_transfer_lines_initial: number;
+  swap_xy: boolean;
+  mirror_x: boolean;
+  mirror_y: boolean;
+  invert_color: boolean;
+  color_order: string;
 };
 
 const destinationOutputRoles = new Set([
@@ -208,6 +232,25 @@ function DestinationPage({ destinationProfile, sourcePins }: { destinationProfil
   const color = destination.color || {};
   const unknowns = destinationProfile?.unknowns || [];
   const [pinRows, setPinRows] = useState<DestinationPinDraft[]>([]);
+  const [gpioStatus, setGpioStatus] = useState<Record<string, unknown> | null>(null);
+  const [destinationBusy, setDestinationBusy] = useState<string | null>(null);
+  const [destinationResult, setDestinationResult] = useState<Record<string, unknown> | null>(null);
+  const [saveResult, setSaveResult] = useState<Record<string, unknown> | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<DestinationSettingsDraft>({
+    controller_ic: 'unknown',
+    width: null,
+    height: null,
+    pclk_hz_initial: 10000000,
+    mode: 0,
+    cmd_bits: 8,
+    param_bits: 8,
+    max_transfer_lines_initial: 40,
+    swap_xy: false,
+    mirror_x: false,
+    mirror_y: false,
+    invert_color: false,
+    color_order: 'unknown'
+  });
   const sourceGpioOwners = useMemo(() => sourceGpioOwnersFromPins(sourcePins), [sourcePins]);
   const destinationGpioOptionsForSelect = useMemo(() => destinationGpioOptions.map((option) => {
     const owner = sourceGpioOwners.get(option.value);
@@ -234,6 +277,25 @@ function DestinationPage({ destinationProfile, sourcePins }: { destinationProfil
       gpio: pin.esp32p4_gpio ?? null,
       notes: pin.notes || ''
     })));
+    const nextDestination = destinationProfile?.destination || {};
+    const nextSpi = nextDestination.spi || {};
+    const nextOrientation = nextDestination.orientation || {};
+    const nextColor = nextDestination.color || {};
+    setSettingsDraft({
+      controller_ic: nextDestination.controller_ic || 'unknown',
+      width: nextDestination.native_resolution?.width ?? null,
+      height: nextDestination.native_resolution?.height ?? null,
+      pclk_hz_initial: nextSpi.pclk_hz_initial || 10000000,
+      mode: nextSpi.mode ?? 0,
+      cmd_bits: nextSpi.cmd_bits || 8,
+      param_bits: nextSpi.param_bits || 8,
+      max_transfer_lines_initial: nextSpi.max_transfer_lines_initial || 40,
+      swap_xy: Boolean(nextOrientation.swap_xy),
+      mirror_x: Boolean(nextOrientation.mirror_x),
+      mirror_y: Boolean(nextOrientation.mirror_y),
+      invert_color: Boolean(nextColor.invert_color),
+      color_order: nextColor.color_order || 'unknown'
+    });
   }, [destinationProfile]);
 
   const updatePinGpio = (key: string, gpio: number | null) => {
@@ -257,7 +319,45 @@ function DestinationPage({ destinationProfile, sourcePins }: { destinationProfil
     ]);
   };
 
-  const mappedOutputRows = pinRows.filter((row) => row.gpio !== null && !['power', 'ground', 'backlight_power'].includes(row.role));
+  const claimedSignals = useMemo(() => {
+    const claims = Array.isArray(gpioStatus?.claims) ? gpioStatus?.claims : [];
+    return new Set(claims.map((claim) => String((claim as Record<string, unknown>).signal)));
+  }, [gpioStatus]);
+
+  const refreshDestinationStatus = async () => {
+    const status = await api.destinationGpioStatus();
+    setGpioStatus(status as Record<string, unknown>);
+    return status;
+  };
+
+  useEffect(() => {
+    refreshDestinationStatus().catch((error) => setDestinationResult({ ok: false, error: error.message }));
+  }, []);
+
+  const runDestinationAction = async (key: string, action: () => Promise<unknown>) => {
+    setDestinationBusy(key);
+    try {
+      const result = await action();
+      setDestinationResult(result as Record<string, unknown>);
+      await refreshDestinationStatus();
+    } catch (error) {
+      setDestinationResult({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setDestinationBusy(null);
+    }
+  };
+
+  const runDestinationSpiAction = async (key: string, action: () => Promise<unknown>) => {
+    setDestinationBusy(key);
+    try {
+      const result = await action();
+      setDestinationResult(result as Record<string, unknown>);
+    } catch (error) {
+      setDestinationResult({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setDestinationBusy(null);
+    }
+  };
 
   const resetPinDraft = () => {
     const pins = destinationProfile?.connector?.pins || [];
@@ -277,7 +377,48 @@ function DestinationPage({ destinationProfile, sourcePins }: { destinationProfil
       role: row.role,
       esp32p4_gpio: row.gpio,
       notes: row.notes
-    }))
+    })),
+    destination: {
+      controller_ic: settingsDraft.controller_ic,
+      native_resolution: settingsDraft.width && settingsDraft.height ? {
+        width: settingsDraft.width,
+        height: settingsDraft.height
+      } : null,
+      spi: {
+        pclk_hz_initial: settingsDraft.pclk_hz_initial,
+        mode: settingsDraft.mode,
+        cmd_bits: settingsDraft.cmd_bits,
+        param_bits: settingsDraft.param_bits,
+        max_transfer_lines_initial: settingsDraft.max_transfer_lines_initial
+      },
+      orientation: {
+        swap_xy: settingsDraft.swap_xy,
+        mirror_x: settingsDraft.mirror_x,
+        mirror_y: settingsDraft.mirror_y
+      },
+      color: {
+        color_order: settingsDraft.color_order,
+        invert_color: settingsDraft.invert_color
+      }
+    }
+  };
+
+  const updateSettingsDraft = (patch: Partial<DestinationSettingsDraft>) => {
+    setSettingsDraft((current) => ({ ...current, ...patch }));
+  };
+
+  const savePinDraft = async () => {
+    setDestinationBusy('save-profile');
+    try {
+      const result = await api.saveDestinationProfile(pinDraftJson);
+      setSaveResult({ ok: true, path: result.path });
+      setDestinationResult({ ok: true, command: 'SAVE_DESTINATION_PROFILE', path: result.path });
+    } catch (error) {
+      setSaveResult({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      setDestinationResult({ ok: false, command: 'SAVE_DESTINATION_PROFILE', error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setDestinationBusy(null);
+    }
   };
 
   return (
@@ -313,29 +454,40 @@ function DestinationPage({ destinationProfile, sourcePins }: { destinationProfil
         </Card>
 
         <Card
-          title="Pin Map Editor"
+          title="Pin Map And Control"
           extra={
             <Space>
-              <Button size="small" onClick={addDraftPin}>Add Pin</Button>
-              <Button size="small" onClick={resetPinDraft}>Reset Draft</Button>
+              <Tooltip title="GPIO edits are draft-only. Claim drives a no-pull output; Release returns it to disabled/no-pull.">
+                <Tag color="blue">explicit claim</Tag>
+              </Tooltip>
+              {destinationResult && (
+                <Tooltip title={<JsonBlock value={destinationResult} />}>
+                  <Tag color={destinationResult.ok ? 'green' : 'red'}>
+                    {destinationResult.ok ? 'last ok' : 'last error'}
+                  </Tag>
+                </Tooltip>
+              )}
+              {saveResult && (
+                <Tooltip title={<JsonBlock value={saveResult} />}>
+                  <Tag color={saveResult.ok ? 'green' : 'red'}>{saveResult.ok ? 'saved' : 'save failed'}</Tag>
+                </Tooltip>
+              )}
+              <Button size="small" type="primary" loading={destinationBusy === 'save-profile'} onClick={savePinDraft}>Save</Button>
+              <Button size="small" icon={<PlusOutlined />} onClick={addDraftPin}>Add</Button>
+              <Button size="small" icon={<ReloadOutlined />} onClick={resetPinDraft}>Reset</Button>
             </Space>
           }
         >
-          <Alert
-            type="info"
-            showIcon
-            className="inlineAlert"
-            message="Editable draft only"
-            description="Changing GPIOs here does not write the profile file, flash firmware, or drive pins. GPIOs already owned by the active source profile are disabled."
-          />
           <Table
             size="small"
             pagination={false}
             dataSource={pinRows}
+            scroll={{ x: 900 }}
             columns={[
               {
-                title: 'Panel Pin',
+                title: 'Pin',
                 dataIndex: 'signal',
+                width: 112,
                 render: (value: string, row: DestinationPinDraft) => (
                   <Select
                     className="pinSignalSelect"
@@ -358,6 +510,7 @@ function DestinationPage({ destinationProfile, sourcePins }: { destinationProfil
               {
                 title: 'Role',
                 dataIndex: 'role',
+                width: 150,
                 render: (value: string, row: DestinationPinDraft) => (
                   <Select
                     className="pinRoleSelect"
@@ -378,8 +531,9 @@ function DestinationPage({ destinationProfile, sourcePins }: { destinationProfil
                 )
               },
               {
-                title: 'ESP32-P4 GPIO',
+                title: 'GPIO',
                 dataIndex: 'gpio',
+                width: 104,
                 render: (value: number | null, row: DestinationPinDraft) => (
                   <Select
                     allowClear
@@ -395,52 +549,103 @@ function DestinationPage({ destinationProfile, sourcePins }: { destinationProfil
                 )
               },
               {
-                title: 'Status',
+                title: 'State',
+                width: 130,
                 render: (_value: unknown, row: DestinationPinDraft) => {
+                  if (row.role === 'power' || row.role === 'ground' || row.role === 'backlight_power') return <Tag>external</Tag>;
                   if (row.gpio === null) return <Tag>TBD</Tag>;
                   const sourceOwner = sourceGpioOwners.get(row.gpio);
-                  if (sourceOwner) return <Tag color="red">source: {sourceOwner}</Tag>;
+                  if (sourceOwner) return <Tooltip title={`Owned by source ${sourceOwner}`}><Tag color="red">source</Tag></Tooltip>;
                   if (destinationDuplicateGpios.has(row.gpio)) return <Tag color="orange">duplicate</Tag>;
-                  return <Tag color="green">free</Tag>;
+                  if (claimedSignals.has(row.signal)) return <Tag color="green">claimed</Tag>;
+                  return <Tag color="blue">free</Tag>;
                 }
               },
-              { title: 'Notes', dataIndex: 'notes' }
-            ]}
-          />
-          <Card size="small" title="Draft Mapping JSON" className="nestedUtilityCard">
-            <JsonBlock value={pinDraftJson} />
-          </Card>
-        </Card>
-
-        <Card title="Live Pin Manipulation">
-          <Alert
-            type="warning"
-            showIcon
-            className="inlineAlert"
-            message="Firmware support pending"
-            description="These controls describe the intended lab workflow. Buttons stay disabled until DEST_GPIO probe commands exist in firmware."
-          />
-          <Table
-            size="small"
-            pagination={false}
-            dataSource={mappedOutputRows}
-            locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Assign GPIOs to destination outputs first" /> }}
-            columns={[
-              { title: 'Signal', dataIndex: 'signal' },
-              { title: 'GPIO', dataIndex: 'gpio', render: (gpio: number) => <Tag>GPIO{gpio}</Tag> },
               {
-                title: 'Controls',
-                render: () => (
-                  <Space wrap>
-                    <Button size="small" disabled>LOW</Button>
-                    <Button size="small" disabled>HIGH</Button>
-                    <Button size="small" disabled>Pulse</Button>
-                    <Button size="small" disabled>Release</Button>
-                  </Space>
-                )
-              }
+                title: 'Actions',
+                width: 238,
+                render: (_value: unknown, row: DestinationPinDraft) => {
+                  if (row.role === 'power' || row.role === 'ground' || row.role === 'backlight_power') {
+                    return <Text type="secondary">external only</Text>;
+                  }
+                  const gpio = row.gpio;
+                  const unavailable = gpio === null || (gpio !== null && sourceGpioOwners.has(gpio)) || (gpio !== null && destinationDuplicateGpios.has(gpio));
+                  const claimed = claimedSignals.has(row.signal);
+                  return (
+                    <Space.Compact className="destinationActions">
+                      <Tooltip title="Validate GPIO without driving">
+                        <Button
+                          size="small"
+                          icon={<CheckCircleOutlined />}
+                          loading={destinationBusy === `${row.key}:validate`}
+                          disabled={unavailable}
+                          aria-label="Validate"
+                          onClick={() => runDestinationAction(`${row.key}:validate`, () => api.destinationGpioValidate(row.signal, gpio as number))}
+                        />
+                      </Tooltip>
+                      <Tooltip title="Claim output">
+                        <Button
+                          size="small"
+                          type="primary"
+                          icon={<ApiOutlined />}
+                          loading={destinationBusy === `${row.key}:claim`}
+                          disabled={unavailable}
+                          aria-label="Claim"
+                          onClick={() => runDestinationAction(`${row.key}:claim`, () => api.destinationGpioClaim(row.signal, gpio as number))}
+                        />
+                      </Tooltip>
+                      <Tooltip title="Drive low">
+                        <Button
+                          size="small"
+                          icon={<ArrowDownOutlined />}
+                          loading={destinationBusy === `${row.key}:low`}
+                          disabled={!claimed}
+                          aria-label="Drive low"
+                          onClick={() => runDestinationAction(`${row.key}:low`, () => api.destinationGpioSet(row.signal, 0))}
+                        />
+                      </Tooltip>
+                      <Tooltip title="Drive high">
+                        <Button
+                          size="small"
+                          icon={<ArrowUpOutlined />}
+                          loading={destinationBusy === `${row.key}:high`}
+                          disabled={!claimed}
+                          aria-label="Drive high"
+                          onClick={() => runDestinationAction(`${row.key}:high`, () => api.destinationGpioSet(row.signal, 1))}
+                        />
+                      </Tooltip>
+                      <Tooltip title="Pulse 100 ms">
+                        <Button
+                          size="small"
+                          icon={<ThunderboltOutlined />}
+                          loading={destinationBusy === `${row.key}:pulse`}
+                          disabled={!claimed}
+                          aria-label="Pulse"
+                          onClick={() => runDestinationAction(`${row.key}:pulse`, () => api.destinationGpioPulse(row.signal, row.signal === 'RESET' ? 0 : 1, 100))}
+                        />
+                      </Tooltip>
+                      <Tooltip title="Release to disabled/no-pull">
+                        <Button
+                          size="small"
+                          danger
+                          icon={<DisconnectOutlined />}
+                          loading={destinationBusy === `${row.key}:release`}
+                          disabled={!claimed}
+                          aria-label="Release"
+                          onClick={() => runDestinationAction(`${row.key}:release`, () => api.destinationGpioRelease(row.signal))}
+                        />
+                      </Tooltip>
+                    </Space.Compact>
+                  );
+                }
+              },
+              { title: 'Notes', dataIndex: 'notes', ellipsis: true }
             ]}
           />
+          <details className="draftJsonDetails">
+            <summary>Draft mapping JSON</summary>
+            <JsonBlock value={pinDraftJson} />
+          </details>
         </Card>
 
         <Card title="Open Unknowns">
@@ -452,62 +657,74 @@ function DestinationPage({ destinationProfile, sourcePins }: { destinationProfil
 
       <Space direction="vertical" size="middle" className="fullWidth">
         <Card title="Panel Parameters">
-          <Form layout="vertical" disabled>
+          <Form layout="vertical">
             <Form.Item label="Controller">
               <Select
-                value={destination.controller_ic || 'unknown'}
+                value={settingsDraft.controller_ic}
                 options={[
                   { value: 'unknown', label: 'Unknown' },
                   { value: 'st7789', label: 'ST7789' },
+                  { value: 'st7796s', label: 'ST7796S' },
                   { value: 'st7735', label: 'ST7735' },
+                  { value: 'ili9486', label: 'ILI9486' },
                   { value: 'ili9341', label: 'ILI9341' },
                   { value: 'gc9a01', label: 'GC9A01' }
                 ]}
+                onChange={(controller_ic) => updateSettingsDraft({ controller_ic })}
               />
             </Form.Item>
             <Space className="fullWidth" size="middle">
               <Form.Item label="Width" className="fullWidth">
-                <InputNumber min={1} value={destination.native_resolution?.width} placeholder="TBD" className="fullWidth" />
+                <InputNumber min={1} max={4096} value={settingsDraft.width ?? undefined} placeholder="TBD" className="fullWidth" onChange={(width) => updateSettingsDraft({ width: typeof width === 'number' ? width : null })} />
               </Form.Item>
               <Form.Item label="Height" className="fullWidth">
-                <InputNumber min={1} value={destination.native_resolution?.height} placeholder="TBD" className="fullWidth" />
+                <InputNumber min={1} max={4096} value={settingsDraft.height ?? undefined} placeholder="TBD" className="fullWidth" onChange={(height) => updateSettingsDraft({ height: typeof height === 'number' ? height : null })} />
               </Form.Item>
             </Space>
             <Form.Item label="SPI clock">
-              <InputNumber min={1000000} value={spi.pclk_hz_initial} addonAfter="Hz" className="fullWidth" />
+              <InputNumber min={100000} max={80000000} value={settingsDraft.pclk_hz_initial} addonAfter="Hz" className="fullWidth" onChange={(pclk_hz_initial) => updateSettingsDraft({ pclk_hz_initial: typeof pclk_hz_initial === 'number' ? pclk_hz_initial : 10000000 })} />
             </Form.Item>
             <Space wrap>
-              <Form.Item label="SPI mode"><InputNumber min={0} max={3} value={spi.mode} /></Form.Item>
-              <Form.Item label="Command bits"><InputNumber min={8} max={16} value={spi.cmd_bits} /></Form.Item>
-              <Form.Item label="Param bits"><InputNumber min={8} max={16} value={spi.param_bits} /></Form.Item>
+              <Form.Item label="SPI mode"><InputNumber min={0} max={3} value={settingsDraft.mode} onChange={(mode) => updateSettingsDraft({ mode: typeof mode === 'number' ? mode : 0 })} /></Form.Item>
+              <Form.Item label="Command bits"><InputNumber min={8} max={16} value={settingsDraft.cmd_bits} onChange={(cmd_bits) => updateSettingsDraft({ cmd_bits: typeof cmd_bits === 'number' ? cmd_bits : 8 })} /></Form.Item>
+              <Form.Item label="Param bits"><InputNumber min={8} max={16} value={settingsDraft.param_bits} onChange={(param_bits) => updateSettingsDraft({ param_bits: typeof param_bits === 'number' ? param_bits : 8 })} /></Form.Item>
             </Space>
+            <Form.Item label="Transfer lines">
+              <InputNumber min={1} max={512} value={settingsDraft.max_transfer_lines_initial} className="fullWidth" onChange={(max_transfer_lines_initial) => updateSettingsDraft({ max_transfer_lines_initial: typeof max_transfer_lines_initial === 'number' ? max_transfer_lines_initial : 40 })} />
+            </Form.Item>
             <Space wrap>
-              <Form.Item label="Swap XY"><Switch checked={Boolean(orientation.swap_xy)} /></Form.Item>
-              <Form.Item label="Mirror X"><Switch checked={Boolean(orientation.mirror_x)} /></Form.Item>
-              <Form.Item label="Mirror Y"><Switch checked={Boolean(orientation.mirror_y)} /></Form.Item>
-              <Form.Item label="Invert"><Switch checked={Boolean(color.invert_color)} /></Form.Item>
+              <Form.Item label="Swap XY"><Switch checked={settingsDraft.swap_xy} onChange={(swap_xy) => updateSettingsDraft({ swap_xy })} /></Form.Item>
+              <Form.Item label="Mirror X"><Switch checked={settingsDraft.mirror_x} onChange={(mirror_x) => updateSettingsDraft({ mirror_x })} /></Form.Item>
+              <Form.Item label="Mirror Y"><Switch checked={settingsDraft.mirror_y} onChange={(mirror_y) => updateSettingsDraft({ mirror_y })} /></Form.Item>
+              <Form.Item label="Invert"><Switch checked={settingsDraft.invert_color} onChange={(invert_color) => updateSettingsDraft({ invert_color })} /></Form.Item>
             </Space>
             <Form.Item label="Color order">
               <Select
-                value={color.color_order || 'unknown'}
+                value={settingsDraft.color_order}
                 options={[
                   { value: 'unknown', label: 'Unknown' },
                   { value: 'rgb', label: 'RGB' },
                   { value: 'bgr', label: 'BGR' }
                 ]}
+                onChange={(color_order) => updateSettingsDraft({ color_order })}
               />
             </Form.Item>
+            <Button block type="primary" loading={destinationBusy === 'save-profile'} onClick={savePinDraft}>Save Destination Profile</Button>
           </Form>
         </Card>
 
         <Card title="Lab Actions">
           <Space direction="vertical" className="fullWidth">
-            <Button block disabled>DEST_SPI_LCD_STATUS</Button>
-            <Button block disabled>DEST_SPI_LCD_INIT</Button>
-            <Button block disabled>TEST_PATTERN color_bars</Button>
-            <Button block disabled>SHOW_LAST_SOURCE_FRAME</Button>
-            <Button block danger disabled>DEST_SPI_LCD_SAFE_OFF</Button>
-            <Text type="secondary">Actions are placeholders until firmware support exists.</Text>
+            <Button block loading={destinationBusy === 'spi-status'} onClick={() => runDestinationSpiAction('spi-status', api.destinationSpiStatus)}>DEST_SPI_LCD_STATUS</Button>
+            <Button block type="primary" loading={destinationBusy === 'spi-init'} onClick={() => runDestinationSpiAction('spi-init', api.destinationSpiInit)}>DEST_SPI_LCD_INIT</Button>
+            <Button block loading={destinationBusy === 'spi-pattern-orientation'} onClick={() => runDestinationSpiAction('spi-pattern-orientation', () => api.destinationSpiTestPattern('orientation'))}>PATTERN orientation</Button>
+            <Button block loading={destinationBusy === 'spi-pattern-bars'} onClick={() => runDestinationSpiAction('spi-pattern-bars', () => api.destinationSpiTestPattern('color_bars'))}>PATTERN color_bars</Button>
+            <Button block loading={destinationBusy === 'spi-pattern565'} onClick={() => runDestinationSpiAction('spi-pattern565', api.destinationSpiTestPattern565)}>PATTERN RGB565 bars</Button>
+            <Button block loading={destinationBusy === 'spi-burst'} onClick={() => runDestinationSpiAction('spi-burst', () => api.destinationSpiSignalBurst(5000))}>SIGNAL_BURST 5s</Button>
+            <Button block loading={destinationBusy === 'spi-clear'} onClick={() => runDestinationSpiAction('spi-clear', () => api.destinationSpiClear('0000'))}>CLEAR black</Button>
+            <Button block loading={destinationBusy === 'spi-show-gbc'} onClick={() => runDestinationSpiAction('spi-show-gbc', api.destinationSpiShowGbcFrame)}>SHOW_GBC_FRAME once</Button>
+            <Button block danger loading={destinationBusy === 'spi-safe-off'} onClick={() => runDestinationSpiAction('spi-safe-off', api.destinationSpiSafeOff)}>DEST_SPI_LCD_SAFE_OFF</Button>
+            <Text type="secondary">SPI actions are command-gated. Nothing runs at boot.</Text>
           </Space>
         </Card>
       </Space>
@@ -658,6 +875,7 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
   const visibleWidth = 160;
   const visibleHeight = 144;
   const streamWidth = 161;
+  const visibleLinearShiftPixels = -4;
   const bytesPerPixel = dataMode === 'RGB666' ? 3 : 2;
 
   const displayScale = 1;
@@ -687,7 +905,9 @@ function drawFrame(canvas: HTMLCanvasElement, raw: Uint8Array, dataMode: string,
 
   for (let y = 0; y < visibleHeight; y += 1) {
     for (let x = 0; x < visibleWidth; x += 1) {
-      const src = (y * streamWidth + x) * bytesPerPixel;
+      let srcPixel = (y * streamWidth + x) + visibleLinearShiftPixels;
+      if (srcPixel < 0) srcPixel = 0;
+      const src = srcPixel * bytesPerPixel;
       const rgb = dataMode === 'RGB565'
         ? pixelRgb565(raw, src)
         : dataMode === 'RGB664'

@@ -143,6 +143,10 @@ Evidence from `20260508T212557Z-lcdcam_raw_high_192x145.bin`:
 Current hypothesis: the decoded source period is `160` visible pixel transfers plus one trailing blank/dummy transfer. This is analogous to a horizontal porch, but it is not yet proven to be a formal LCD timing porch rather than a capture-alignment byte.
 
 The `145`-row period versus `144` visible rows may indicate one vertical blank/source-driver row. Its position is not yet proven because the current boot-screen capture has background at both the top and bottom.
+
+2026-05-11 update from deterministic alignment ROM: the practical source model is now `161x145 RGB565` stream -> `160x144 RGB565` visible frame with a linear `-4` pixel stream shift. The alignment ROM expected top-row runs of `16 red + 128 white + 16 green`; the raw stream produced `12 red + 128 white + 17 green + 4 red`, proving the right-edge wrap was source stream phase, not SPI LCD corruption. Applying `src_pixel = y * 161 + x - 4` recovers the expected row geometry after the first captured pixels.
+
+Confidence: high for current GBC source/profile behavior. Remaining unknown: whether a persistent capture path can arm before the frame boundary and recover the first four currently missing pixels without clamping.
 - Determine why the best coherent view occupies raw region `x=0..31`, `y=84..111`; correlate that region with `LP`, `CLS`, and `PS` timing if possible.
 
 2026-05-09: The cyan sparkle around `GAME BOY` text was traced to the DCLK sample edge.

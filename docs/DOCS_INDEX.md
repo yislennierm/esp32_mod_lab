@@ -4,7 +4,7 @@ Purpose: map the documentation set so humans and AI agents know what to read fir
 
 Status: canonical navigation file.
 
-Last updated: 2026-05-10.
+Last updated: 2026-05-11.
 
 ## Read Order
 
@@ -34,6 +34,7 @@ For humans:
 | `docs/DOCS_INDEX.md` | Documentation map and read order. |
 | `docs/system_method.md` | Source-processing-destination method. |
 | `docs/system_gap_assessment.md` | Current gaps and recommended roadmap. |
+| `docs/esp32p4_modder_research_plan.md` | Modder-style ESP32-P4 research plan, references, and benchmark phases. |
 | `docs/ant_design_ui_plan.md` | Ant Design UI direction and migration plan. |
 | `profiles/gbc_lcd.json` | Machine-readable current GBC source profile. |
 
@@ -47,7 +48,14 @@ For humans:
 | `docs/ant_design_ui_plan.md` | Browser UI component mapping and migration plan. |
 | `docs/capture_pipeline.md` | Capture path history and technical details. |
 | `docs/dual_transport_strategy.md` | Native USB and WCH UART roles for safe recovery and high-FPS development. |
+| `docs/platform/esp32p4_capability_matrix.md` | ESP32-P4 source, processing, destination, and USB capability matrix. |
+| `docs/platform/esp32p4_internal_dataflow_plan.md` | Internal ESP32-P4 performance plan for capture, frame rings, accelerators, and sinks. |
+| `docs/platform/board_capability_audit.md` | Board-specific exposure audit for ESP32-P4 peripherals and current pin ownership. |
+| `docs/platform/peripheral_evidence_table.md` | Evidence-ranked ESP32-P4 peripheral table and next experiment map. |
+| `docs/platform/reference_pcb_architecture.md` | Custom ESP32-P4 PCB architecture for lab and production bridge hardware. |
 | `docs/firmware_recovery_workflow.md` | Repeatable build, flash, recovery, and serial-port ownership workflow. |
+| `docs/production_modes.md` | Compile-time production firmware modes assembled from proven lab blocks. |
+| `docs/esp32p4_modder_research_plan.md` | Research path for source capture, PPA, USB, and serious display destinations. |
 | `docs/destination_spi_lcd_lab.md` | Draft destination research contract for SPI LCD/IPS modules. |
 | `docs/artifacts/manifest_format.md` | Future common capture manifest. |
 | `docs/project_maintenance.md` | Cleanup and modularization plan. |
@@ -79,7 +87,12 @@ For humans:
 |---|---|
 | `docs/document_inventory.md` | Classification of current documentation. |
 | `docs/host_script_inventory.md` | Classification of current host scripts. |
-| `docs/platform/README.md` | Placeholder for future platform docs. |
+| `docs/platform/README.md` | Platform documentation entry point. |
+| `docs/platform/esp32p4_capability_matrix.md` | ESP32-P4 capability and benchmark planning matrix. |
+| `docs/platform/esp32p4_internal_dataflow_plan.md` | ESP32-P4 internal dataflow benchmark plan. |
+| `docs/platform/board_capability_audit.md` | Specific ESP32-P4 board audit and pin/peripheral exposure gaps. |
+| `docs/platform/peripheral_evidence_table.md` | Peripheral evidence level table for source, processing, destination, and transport blocks. |
+| `docs/platform/reference_pcb_architecture.md` | Reference hardware architecture for custom ESP32-P4 signal-lab PCBs. |
 | `docs/targets/gbc_lcd/README.md` | Placeholder for future GBC target docs. |
 
 ## Documentation Rules
