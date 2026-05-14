@@ -25,6 +25,12 @@ The first real project is:
 GBC LCD source -> no processing -> SPI LCD destination
 ```
 
+Each concrete project now targets three firmware build flavors:
+
+- `lab`: research, probing, capture review, evidence collection, and destination bring-up
+- `telemetry`: selected runtime observation and monitoring of chosen ESP32-P4 blocks
+- `production`: minimal deployable product firmware with the lab control path removed from the hot loop
+
 The UI should treat this as a project profile, not as a one-off set of buttons. A project can be validated, built, flashed, and monitored from the browser through the local backend.
 
 Confidence level: medium-high for the model, medium for the exact JSON schema. The model matches the workflow that produced the current GBC mirror, but it should remain flexible until a second source or destination is added.
@@ -55,10 +61,13 @@ DEST_SPI_LCD_PCLK_HZ=70000000
 PRODUCTION_MIRROR_MODE=2
 ```
 
+The current GBC project metadata now exposes all three build profiles through the workbench so build/flash actions no longer assume a single production-only deployment path.
+
 ## Next Steps
 
 - Move block metadata into explicit profile files once a second project exists.
 - Add form-based editing for project graph nodes, parameters, and metadata.
 - Add a backend job log so build and flash output can stream into the UI.
+- Add profile-specific telemetry configuration so telemetry builds can explicitly choose which ESP32-P4 blocks remain observable.
 - Add generated firmware configuration from project profiles instead of relying only on environment variables.
 - Add a project compatibility check for peripheral ownership, memory class, and transport bandwidth.

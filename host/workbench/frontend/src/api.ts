@@ -112,6 +112,17 @@ export type LabBlock = {
   evidence?: string[];
 };
 
+export type ProjectBuildProfile = {
+  id?: string;
+  name?: string;
+  role?: string;
+  description?: string;
+  build_script?: string | null;
+  flash_script?: string | null;
+  default_env?: Record<string, string>;
+  known_good_command?: string | null;
+};
+
 export type LabProject = {
   id: string;
   name: string;
@@ -127,6 +138,7 @@ export type LabProject = {
     default_env?: Record<string, string>;
     known_good_command?: string | null;
   };
+  build_profiles?: Record<string, ProjectBuildProfile>;
   graph?: {
     nodes?: Array<Record<string, unknown>>;
     edges?: Array<Record<string, unknown>>;
@@ -147,6 +159,7 @@ export type ProjectActionResult = {
   ok: boolean;
   project_id: string;
   action: string;
+  build_profile?: string;
   command?: string[];
   returncode?: number;
   stdout?: string;
@@ -273,8 +286,8 @@ export const api = {
   deleteProject: (id: string, confirm?: string) => postJson<ProjectMutationResult>('/api/projects/delete', { id, confirm }),
   importIdfExample: (id: string) => postJson<ProjectMutationResult>('/api/projects/import-idf-example', { id }),
   validateProject: (projectId: string) => getJson<ProjectValidation>(`/api/projects/validate?id=${encodeURIComponent(projectId)}`),
-  buildProject: (projectId: string) => postJson<ProjectActionResult>('/api/projects/build', { id: projectId }),
-  flashProject: (projectId: string) => postJson<ProjectActionResult>('/api/projects/flash', { id: projectId }),
+  buildProject: (projectId: string, profile = 'production') => postJson<ProjectActionResult>('/api/projects/build', { id: projectId, profile }),
+  flashProject: (projectId: string, profile = 'production') => postJson<ProjectActionResult>('/api/projects/flash', { id: projectId, profile }),
   profile: () => getJson<TargetProfile>('/api/profile'),
   destinationProfile: () => getJson<DestinationProfile>('/api/destination-profile'),
   saveDestinationProfile: (payload: unknown) => postJson<{ ok: boolean; profile: DestinationProfile; path: string }>('/api/destination-profile', payload),

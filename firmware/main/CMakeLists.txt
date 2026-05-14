@@ -25,6 +25,14 @@ if(DEFINED ENV{GBC_P4_SAFE_RECOVERY})
     target_compile_definitions(${COMPONENT_LIB} PRIVATE GBC_P4_SAFE_RECOVERY=1)
 endif()
 
+if(DEFINED ENV{GBC_P4_LAB})
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE GBC_P4_LAB=1)
+endif()
+
+if(DEFINED ENV{GBC_P4_TELEMETRY})
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE GBC_P4_TELEMETRY=1)
+endif()
+
 if(DEFINED ENV{GBC_P4_PRODUCTION_MIRROR})
     target_compile_definitions(${COMPONENT_LIB} PRIVATE GBC_P4_PRODUCTION_MIRROR=1)
 endif()

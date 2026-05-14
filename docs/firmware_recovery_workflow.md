@@ -55,6 +55,25 @@ scripts/flash_probe_firmware.sh /dev/cu.wchusbserial5A470211841
 
 - After WCH flashing, `PING` responded on native USB `/dev/cu.usbmodem14301`.
 
+2026-05-14:
+
+- The currently running known-good production mirror image was confirmed non-destructively by passive serial log read on Linux native USB `/dev/ttyACM0`.
+- Observed output reported `mode="production_mirror_overlap"`, about `29.863 FPS`, `avg_capture_us ~= 28832`, `avg_draw_us ~= 15333`, and zero drops/failures.
+- Repository state associated with this known-good recovery point:
+
+```text
+commit: 3dca664ff579674dc15f58b669ef68f9ee29112e
+git status: clean
+```
+
+- Known-good production recovery flash command for this state:
+
+```sh
+DEST_SPI_LCD_RAW_SPI=1 DEST_SPI_LCD_PCLK_HZ=70000000 PRODUCTION_MIRROR_MODE=2 ./scripts/flash_production_mirror.sh /dev/ttyACM0
+```
+
+- Important: do not use bare `./scripts/flash_production_mirror.sh /dev/ttyACM0` if the goal is to restore the current good mirror state. The script defaults to `PRODUCTION_MIRROR_MODE=1`, while the verified good device image is overlap mode `2` with `DEST_SPI_LCD_RAW_SPI=1` and `DEST_SPI_LCD_PCLK_HZ=70000000`.
+
 ## 5. Standard Procedure
 
 Before flashing:
@@ -82,6 +101,12 @@ Flash normal probe firmware through native USB when it is stable:
 scripts/flash_probe_firmware.sh /dev/cu.usbmodem14301
 ```
 
+Current Linux native USB example:
+
+```sh
+scripts/flash_probe_firmware.sh /dev/ttyACM0
+```
+
 Flash normal probe firmware through WCH UART when native USB flashing is unstable or occupied:
 
 ```sh
@@ -98,6 +123,12 @@ Flash safe recovery firmware:
 
 ```sh
 scripts/flash_safe_recovery.sh /dev/cu.usbmodem14301
+```
+
+Restore the currently known-good production mirror state:
+
+```sh
+DEST_SPI_LCD_RAW_SPI=1 DEST_SPI_LCD_PCLK_HZ=70000000 PRODUCTION_MIRROR_MODE=2 ./scripts/flash_production_mirror.sh /dev/ttyACM0
 ```
 
 Verify firmware:

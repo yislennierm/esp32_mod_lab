@@ -12,6 +12,12 @@ Current target profile: Game Boy Color LCD bus.
 
 Current practical status: live RGB565 browser inspection is working for the GBC target on the native USB lab path, while full-rate streaming and product-mode capture remain under development.
 
+Current project/build model:
+
+- `lab`: research, probing, live monitor, validation, and destination experiments
+- `telemetry`: selected runtime observation for chosen ESP32-P4 blocks
+- `production`: clean deployable product path with the lab control path removed from the hot loop
+
 The first machine-readable target profile is [profiles/gbc_lcd.json](profiles/gbc_lcd.json).
 
 The browser/host tooling roadmap is [docs/investigation_workbench.md](docs/investigation_workbench.md). The goal is a staged research instrument for pin inspection, timing measurement, signal-role discovery, raw capture, hypothesis testing, and AI-readable evidence packs; the live image viewer is only one module.
@@ -145,28 +151,40 @@ Log out and back in after changing group membership.
 
 ## Build And Flash
 
-Build normal lab firmware:
+Build lab firmware:
 
 ```sh
-./scripts/build_probe_firmware.sh
+./scripts/build_lab_firmware.sh
 ```
 
-Flash normal lab firmware. Use the native USB port or the WCH recovery port, depending on board state:
+Flash lab firmware. Use the native USB port or the WCH recovery port, depending on board state:
 
 ```sh
-./scripts/flash_probe_firmware.sh "$PORT"
+./scripts/flash_lab_firmware.sh "$PORT"
 ```
 
-Example macOS recovery flash:
+Build telemetry firmware:
 
 ```sh
-./scripts/flash_probe_firmware.sh /dev/cu.wchusbserial5A470211841
+./scripts/build_telemetry_firmware.sh
 ```
 
-Example Linux flash:
+Flash telemetry firmware:
 
 ```sh
-./scripts/flash_probe_firmware.sh /dev/ttyUSB0
+./scripts/flash_telemetry_firmware.sh "$PORT"
+```
+
+Build production firmware:
+
+```sh
+./scripts/build_production_mirror.sh
+```
+
+Flash the current known-good production GBC mirror:
+
+```sh
+DEST_SPI_LCD_RAW_SPI=1 DEST_SPI_LCD_PCLK_HZ=70000000 PRODUCTION_MIRROR_MODE=2 ./scripts/flash_production_mirror.sh "$PORT"
 ```
 
 Build or flash safe recovery firmware before risky transport/capture experiments:

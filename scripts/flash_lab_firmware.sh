@@ -3,14 +3,14 @@ set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
     printf 'usage: %s <serial-port>\n' "$0" >&2
-    printf 'example: %s /dev/cu.usbmodem14301\n' "$0" >&2
+    printf 'example: %s /dev/ttyACM0\n' "$0" >&2
     exit 2
 fi
 
 PORT="$1"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIRMWARE_DIR="${ROOT_DIR}/firmware"
-SELECTED_BUILD_DIR="${PROBE_BUILD_DIR:-${BUILD_DIR:-build_esp32p4}}"
+SELECTED_BUILD_DIR="${LAB_BUILD_DIR:-build_lab}"
 BAUD="${BAUD:-115200}"
 
 source "${ROOT_DIR}/scripts/idf_env.sh"

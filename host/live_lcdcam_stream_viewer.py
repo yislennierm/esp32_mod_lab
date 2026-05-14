@@ -1125,14 +1125,70 @@ def load_project_profiles() -> list[dict[str, Any]]:
             project = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(project, dict):
                 project["_path"] = str(path.relative_to(project_root_dir()))
-                items.append(project)
+                items.append(project_with_normalized_profiles(project))
         except Exception:
             continue
     return items
 
 
 def public_project(project: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in project.items() if k != "_path"}
+    normalized = project_with_normalized_profiles(project)
+    return {k: v for k, v in normalized.items() if k != "_path"}
+
+
+def legacy_production_build_profile(project: dict[str, Any]) -> dict[str, Any]:
+    production = project.get("production")
+    if isinstance(production, dict):
+        return {
+            "id": "production",
+            "name": "Production",
+            "role": "production",
+            "description": "Clean deployable firmware image with no extra lab control path in the hot loop.",
+            "build_script": production.get("build_script"),
+            "flash_script": production.get("flash_script"),
+            "default_env": production.get("default_env", {}) if isinstance(production.get("default_env"), dict) else {},
+            "known_good_command": production.get("known_good_command"),
+        }
+    return {
+        "id": "production",
+        "name": "Production",
+        "role": "production",
+        "description": "Clean deployable firmware image with no extra lab control path in the hot loop.",
+        "build_script": None,
+        "flash_script": None,
+        "default_env": {},
+        "known_good_command": None,
+    }
+
+
+def normalize_build_profiles(project: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw_profiles = project.get("build_profiles")
+    profiles: dict[str, dict[str, Any]] = {}
+    if isinstance(raw_profiles, dict):
+        for profile_id, raw in raw_profiles.items():
+            if not isinstance(raw, dict):
+                continue
+            profiles[str(profile_id)] = {
+                "id": str(profile_id),
+                "name": str(raw.get("name") or str(profile_id).replace("_", " ").title()),
+                "role": str(raw.get("role") or profile_id),
+                "description": str(raw.get("description") or ""),
+                "build_script": raw.get("build_script"),
+                "flash_script": raw.get("flash_script"),
+                "default_env": raw.get("default_env", {}) if isinstance(raw.get("default_env"), dict) else {},
+                "known_good_command": raw.get("known_good_command"),
+            }
+    if "production" not in profiles:
+        profiles["production"] = legacy_production_build_profile(project)
+    return profiles
+
+
+def project_with_normalized_profiles(project: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(project)
+    normalized["build_profiles"] = normalize_build_profiles(project)
+    if "production" not in normalized or not isinstance(normalized.get("production"), dict):
+        normalized["production"] = normalized["build_profiles"].get("production", {})
+    return normalized
 
 
 def project_path_for_id(project_id: str) -> Path:
@@ -1166,6 +1222,35 @@ def create_project_profile(payload: dict[str, Any]) -> dict[str, Any]:
         "processing": payload.get("processing") if isinstance(payload.get("processing"), list) else [],
         "destination": payload.get("destination") if isinstance(payload.get("destination"), dict) else {"block": "unassigned_destination", "profile": None},
         "graph": payload.get("graph") if isinstance(payload.get("graph"), dict) else {"nodes": [], "edges": []},
+        "build_profiles": payload.get("build_profiles") if isinstance(payload.get("build_profiles"), dict) else {
+            "lab": {
+                "name": "Lab",
+                "role": "lab",
+                "description": "Research, probing, capture, and validation firmware with the interactive command path enabled.",
+                "build_script": "scripts/build_lab_firmware.sh",
+                "flash_script": "scripts/flash_lab_firmware.sh",
+                "default_env": {"LAB_BUILD_DIR": "build_lab"},
+                "known_good_command": "./scripts/flash_lab_firmware.sh ${ESP32P4_PORT}",
+            },
+            "telemetry": {
+                "name": "Telemetry",
+                "role": "telemetry",
+                "description": "Runtime observation firmware for selected ESP32-P4 blocks with the command path enabled.",
+                "build_script": "scripts/build_telemetry_firmware.sh",
+                "flash_script": "scripts/flash_telemetry_firmware.sh",
+                "default_env": {"TELEMETRY_BUILD_DIR": "build_telemetry"},
+                "known_good_command": "./scripts/flash_telemetry_firmware.sh ${ESP32P4_PORT}",
+            },
+            "production": {
+                "name": "Production",
+                "role": "production",
+                "description": "Deployable project firmware with minimal overhead in the hot path.",
+                "build_script": None,
+                "flash_script": None,
+                "default_env": {},
+                "known_good_command": None,
+            },
+        },
         "production": payload.get("production") if isinstance(payload.get("production"), dict) else {
             "build_script": None,
             "flash_script": None,
@@ -1178,7 +1263,7 @@ def create_project_profile(payload: dict[str, Any]) -> dict[str, Any]:
     projects_dir().mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(project, indent=2, sort_keys=False) + "\n", encoding="utf-8")
     project["_path"] = str(path.relative_to(project_root_dir()))
-    return project
+    return project_with_normalized_profiles(project)
 
 
 def save_project_profile(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1192,9 +1277,12 @@ def save_project_profile(payload: dict[str, Any]) -> dict[str, Any]:
     project.pop("_path", None)
     if project_id != project.get("id"):
         raise ValueError("id_mismatch")
+    if not isinstance(project.get("production"), dict):
+        profiles = normalize_build_profiles(project)
+        project["production"] = profiles.get("production", {})
     path.write_text(json.dumps(project, indent=2, sort_keys=False) + "\n", encoding="utf-8")
     project["_path"] = str(path.relative_to(project_root_dir()))
-    return project
+    return project_with_normalized_profiles(project)
 
 
 def duplicate_project_profile(projects: list[dict[str, Any]], payload: dict[str, Any]) -> dict[str, Any]:
@@ -1590,9 +1678,11 @@ def validate_project_profile(
         if gpio in seen_destination:
             errors.append(f"destination {row['signal']} duplicates GPIO{gpio} used by {seen_destination[gpio]}")
         seen_destination[gpio] = str(row["signal"])
-    production = project.get("production", {})
-    if not isinstance(production, dict) or not production.get("build_script") or not production.get("flash_script"):
-        warnings.append("project has no complete production build/flash script metadata")
+    build_profiles = normalize_build_profiles(project)
+    for profile_id in ("lab", "telemetry", "production"):
+        profile_entry = build_profiles.get(profile_id)
+        if not isinstance(profile_entry, dict) or not profile_entry.get("build_script") or not profile_entry.get("flash_script"):
+            warnings.append(f"project has no complete {profile_id} build/flash script metadata")
     if not destination_rows:
         warnings.append("destination profile has no active output GPIOs")
     return {
@@ -1605,18 +1695,19 @@ def validate_project_profile(
     }
 
 
-def run_project_script(project: dict[str, Any], action: str, port: str | None = None) -> dict[str, Any]:
-    production = project.get("production", {})
-    if not isinstance(production, dict):
-        raise ValueError("project_missing_production")
+def run_project_script(project: dict[str, Any], action: str, build_profile: str, port: str | None = None) -> dict[str, Any]:
+    profiles = normalize_build_profiles(project)
+    selected = profiles.get(build_profile)
+    if not isinstance(selected, dict):
+        raise ValueError(f"unknown_build_profile:{build_profile}")
     script_key = "build_script" if action == "build" else "flash_script"
-    script = production.get(script_key)
+    script = selected.get(script_key)
     if not isinstance(script, str) or not script:
-        raise ValueError(f"project_missing_{script_key}")
+        raise ValueError(f"project_missing_{build_profile}_{script_key}")
     script_path = project_root_dir() / script
     if not script_path.exists():
         raise ValueError(f"script_not_found:{script}")
-    env = dict(**{k: str(v) for k, v in production.get("default_env", {}).items()}) if isinstance(production.get("default_env"), dict) else {}
+    env = dict(**{k: str(v) for k, v in selected.get("default_env", {}).items()}) if isinstance(selected.get("default_env"), dict) else {}
     command = [str(script_path)]
     if action == "flash":
         if not port:
@@ -1635,6 +1726,7 @@ def run_project_script(project: dict[str, Any], action: str, port: str | None = 
         "ok": completed.returncode == 0,
         "project_id": project.get("id", ""),
         "action": action,
+        "build_profile": build_profile,
         "command": command,
         "returncode": completed.returncode,
         "stdout": completed.stdout[-12000:],
@@ -1875,20 +1967,22 @@ def make_handler(
                         raise ValueError("invalid_content_length")
                     payload = json.loads(self.rfile.read(length).decode("utf-8"))
                     project_id = str(payload.get("id", "")).strip()
-                    project = find_project(projects, project_id)
+                    build_profile = str(payload.get("profile") or "production").strip() or "production"
+                    project = find_project(load_project_profiles(), project_id)
                     validation = validate_project_profile(project, profile, destination_profile)
                     if not validation["ok"]:
                         self.send_body(400, "application/json", json.dumps({
                             "ok": False,
                             "project_id": project_id,
                             "action": action,
+                            "build_profile": build_profile,
                             "error": "validation_failed",
                             "validation": validation,
                         }).encode("utf-8"))
                         return
                     if action == "flash":
                         state.release_serial_for_deploy()
-                    result = run_project_script(project, action, state.port if action == "flash" else None)
+                    result = run_project_script(project, action, build_profile, state.port if action == "flash" else None)
                     self.send_body(200 if result.get("ok") else 500, "application/json", json.dumps(result).encode("utf-8"))
                 except Exception as exc:
                     self.send_body(500, "application/json", json.dumps({"ok": False, "action": action, "error": str(exc)}).encode("utf-8"))

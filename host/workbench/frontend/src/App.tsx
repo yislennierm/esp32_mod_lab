@@ -227,6 +227,29 @@ function createDraftProject(): LabProject {
       default_env: {},
       known_good_command: null
     },
+    build_profiles: {
+      lab: {
+        name: 'Lab',
+        role: 'lab',
+        build_script: 'scripts/build_lab_firmware.sh',
+        flash_script: 'scripts/flash_lab_firmware.sh',
+        default_env: { LAB_BUILD_DIR: 'build_lab' }
+      },
+      telemetry: {
+        name: 'Telemetry',
+        role: 'telemetry',
+        build_script: 'scripts/build_telemetry_firmware.sh',
+        flash_script: 'scripts/flash_telemetry_firmware.sh',
+        default_env: { TELEMETRY_BUILD_DIR: 'build_telemetry' }
+      },
+      production: {
+        name: 'Production',
+        role: 'production',
+        build_script: null,
+        flash_script: null,
+        default_env: {}
+      }
+    },
     mcu_blocks: ['HP RISC-V x2', 'GPIO Matrix / IO MUX'],
     graph: {
       nodes: [],
@@ -263,6 +286,31 @@ function ProjectPage({
   const [validation, setValidation] = useState<ProjectValidation | null>(null);
   const [projectBusy, setProjectBusy] = useState<string | null>(null);
   const [projectResult, setProjectResult] = useState<ProjectActionResult | null>(null);
+  const [selectedBuildProfile, setSelectedBuildProfile] = useState<string>('production');
+
+  const buildProfileEntries = Object.entries(selectedProject?.build_profiles || {});
+  const buildProfileOptions = buildProfileEntries.map(([id, entry]) => ({
+    value: id,
+    label: entry?.name || id
+  }));
+  const activeBuildProfile = (selectedProject?.build_profiles?.[selectedBuildProfile]
+    || selectedProject?.build_profiles?.production
+    || (buildProfileEntries.length ? buildProfileEntries[0]?.[1] : null));
+
+  useEffect(() => {
+    if (!selectedProject?.build_profiles) {
+      setSelectedBuildProfile('production');
+      return;
+    }
+    if (!selectedProject.build_profiles[selectedBuildProfile]) {
+      if (selectedProject.build_profiles.production) {
+        setSelectedBuildProfile('production');
+        return;
+      }
+      const firstProfile = Object.keys(selectedProject.build_profiles)[0];
+      if (firstProfile) setSelectedBuildProfile(firstProfile);
+    }
+  }, [selectedProject, selectedBuildProfile]);
 
   const validateProject = async () => {
     if (!selectedProject || selectedProject.status === 'draft_local_only') return;
@@ -290,14 +338,15 @@ function ProjectPage({
     setProjectBusy(action);
     try {
       const result = action === 'build'
-        ? await api.buildProject(selectedProject.id)
-        : await api.flashProject(selectedProject.id);
+        ? await api.buildProject(selectedProject.id, selectedBuildProfile)
+        : await api.flashProject(selectedProject.id, selectedBuildProfile);
       setProjectResult(result);
     } catch (error) {
       setProjectResult({
         ok: false,
         project_id: selectedProject?.id || '',
         action,
+        build_profile: selectedBuildProfile,
         error: error instanceof Error ? error.message : String(error)
       });
     } finally {
@@ -331,12 +380,18 @@ function ProjectPage({
                 <Descriptions.Item label="Ingress role">{selectedProject?.source?.block || '?'}</Descriptions.Item>
                 <Descriptions.Item label="Transform roles">{selectedProject?.processing?.length ? selectedProject.processing.map((item) => item.block).join(', ') : 'none'}</Descriptions.Item>
                 <Descriptions.Item label="Egress role">{selectedProject?.destination?.block || '?'}</Descriptions.Item>
-                <Descriptions.Item label="Deploy mode">{selectedProject?.production?.default_env?.PRODUCTION_MIRROR_MODE ? `mode ${selectedProject.production.default_env.PRODUCTION_MIRROR_MODE}` : '?'}</Descriptions.Item>
+                <Descriptions.Item label="Build profile">{activeBuildProfile?.name || selectedBuildProfile}</Descriptions.Item>
               </Descriptions>
               <Space wrap>
+                <Select
+                  style={{ minWidth: 150 }}
+                  value={selectedBuildProfile}
+                  options={buildProfileOptions}
+                  onChange={setSelectedBuildProfile}
+                />
                 <Button icon={<CheckCircleOutlined />} loading={projectBusy === 'validate'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={validateProject}>Validate</Button>
                 <Button icon={<BugOutlined />} loading={projectBusy === 'build'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={() => runProjectAction('build')}>Build</Button>
-                <Button type="primary" danger icon={<RocketOutlined />} loading={projectBusy === 'flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={() => runProjectAction('flash')}>Flash Production</Button>
+                <Button type="primary" danger icon={<RocketOutlined />} loading={projectBusy === 'flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={() => runProjectAction('flash')}>{`Flash ${activeBuildProfile?.name || 'Build'}`}</Button>
                 <Button disabled={!selectedProject} onClick={() => selectedProject && onSaveProject(selectedProject)}>Save</Button>
                 <Button disabled={!selectedProject} onClick={() => selectedProject && onDuplicateProject(selectedProject)}>Duplicate</Button>
                 <Button danger disabled={!selectedProject} onClick={() => selectedProject && onDeleteProject(selectedProject)}>Delete</Button>
@@ -349,8 +404,8 @@ function ProjectPage({
                   label: 'Deploy notes',
                   children: (
                     <Space direction="vertical" className="fullWidth">
-                      <Text type="secondary">Flash releases the workbench serial session first. After production firmware is flashed, restart the lab firmware to return to interactive commands.</Text>
-                      <JsonBlock value={selectedProject?.production} />
+                      <Text type="secondary">Flash releases the workbench serial session first. Production leaves the board in product mode; lab and telemetry keep the interactive command path available for the workbench.</Text>
+                      <JsonBlock value={activeBuildProfile} />
                     </Space>
                   )
                 }]}

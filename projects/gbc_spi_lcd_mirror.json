@@ -1,9 +1,9 @@
 {
   "schema_version": "0.1",
   "id": "gbc_spi_lcd_mirror",
-  "name": "GBC LCD to SPI LCD Mirror",
-  "status": "validated_lab_to_early_production",
-  "description": "First real project assembled from the lab: capture the Game Boy Color LCD bus and mirror it to the SPI LCD destination.",
+  "name": "ESP32-P4 GBC Screen Mod",
+  "status": "validated_lab_telemetry_production_split",
+  "description": "Game Boy Color LCD capture and SPI LCD output project with explicit lab, telemetry, and production build flavors.",
   "source": {
     "block": "gbc_lcd_source",
     "profile": "profiles/gbc_lcd.json"
@@ -24,6 +24,44 @@
     "PSRAM",
     "USB Serial/JTAG"
   ],
+  "build_profiles": {
+    "lab": {
+      "name": "Lab",
+      "role": "lab",
+      "description": "Interactive research firmware for probing, live monitor capture, validation, and destination experiments.",
+      "build_script": "scripts/build_lab_firmware.sh",
+      "flash_script": "scripts/flash_lab_firmware.sh",
+      "default_env": {
+        "LAB_BUILD_DIR": "build_lab"
+      },
+      "known_good_command": "./scripts/flash_lab_firmware.sh ${ESP32P4_PORT}"
+    },
+    "telemetry": {
+      "name": "Telemetry",
+      "role": "telemetry",
+      "description": "Selectable runtime observation firmware for chosen ESP32-P4 blocks while keeping the command path available.",
+      "build_script": "scripts/build_telemetry_firmware.sh",
+      "flash_script": "scripts/flash_telemetry_firmware.sh",
+      "default_env": {
+        "TELEMETRY_BUILD_DIR": "build_telemetry"
+      },
+      "known_good_command": "./scripts/flash_telemetry_firmware.sh ${ESP32P4_PORT}"
+    },
+    "production": {
+      "name": "Production",
+      "role": "production",
+      "description": "Clean deployable source-to-destination firmware with the browser workbench removed from the hot path.",
+      "build_script": "scripts/build_production_mirror.sh",
+      "flash_script": "scripts/flash_production_mirror.sh",
+      "default_env": {
+        "BUILD_DIR": "build_production_mirror",
+        "DEST_SPI_LCD_RAW_SPI": "1",
+        "DEST_SPI_LCD_PCLK_HZ": "70000000",
+        "PRODUCTION_MIRROR_MODE": "2"
+      },
+      "known_good_command": "DEST_SPI_LCD_RAW_SPI=1 DEST_SPI_LCD_PCLK_HZ=70000000 PRODUCTION_MIRROR_MODE=2 ./scripts/flash_production_mirror.sh ${ESP32P4_PORT}"
+    }
+  },
   "production": {
     "build_script": "scripts/build_production_mirror.sh",
     "flash_script": "scripts/flash_production_mirror.sh",
