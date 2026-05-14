@@ -28,6 +28,24 @@ The GBC investigation story is preserved as a web-ready article at [docs/gbc_lcd
 
 The repeatable source-processing-destination method is [docs/system_method.md](docs/system_method.md), with current gaps tracked in [docs/system_gap_assessment.md](docs/system_gap_assessment.md).
 
+## Split Status
+
+The lab/project split is only partially reflected in the filesystem today.
+
+What is already true:
+
+- generic lab workflows live under `host/workbench/`, `scripts/`, `profiles/`, and shared docs
+- deployable compositions live under `projects/`
+- target-specific placeholder areas now exist under `docs/targets/`, `host/targets/`, and `firmware/targets/`
+
+What is not fully true yet:
+
+- the working GBC firmware is still mixed into `firmware/main/`
+- several active GBC host tools still live at top-level `host/`
+- most GBC investigation docs still live in top-level `docs/`
+
+That is intentional for now: working code paths are being preserved while the repository grows explicit split boundaries first.
+
 ## Repository Setup
 
 Clone the repo:
@@ -262,21 +280,24 @@ If flashing reports `No serial data received`, put the board into ROM download m
 ## Repository Layout
 
 ```text
-firmware/       ESP-IDF firmware modules and tests
-host/           Python capture, decoding, timing, and reconstruction tools
-host/lab/       Future reusable host-side APIs
-host/tools/     Future stable CLI wrappers
-host/workbench/ Future browser workbench split
-host/targets/   Future target-specific host modules
-host/experiments/ Historical/prototype script index
-captures/       Raw traces, decoded captures, screenshots, and oscilloscope exports
-docs/           Living reverse engineering documentation
-docs/artifacts/ Artifact manifest and evidence formats
-profiles/       Target-specific signal maps, safety notes, and capture presets
-profiles/schema/ Draft profile schema and validation notes
-tools/          Local helper utilities
-scripts/        Repeatable setup and automation scripts
-codex_prompts/  Project-specific prompts and working notes
+firmware/           ESP-IDF firmware sources and build outputs
+firmware/main/      Current active firmware entrypoint and working modules
+firmware/lab/       Intended reusable lab firmware layer
+firmware/targets/   Intended target/project-specific firmware layer
+host/               Python capture, decode, transport, and backend tools
+host/workbench/     Browser workbench frontend and backend support
+host/lab/           Intended reusable host-side lab APIs
+host/targets/       Intended target-specific host modules
+host/tools/         Stable CLI/tooling helpers
+host/experiments/   Historical or prototype script index
+projects/           Deployable project compositions and imported example projects
+profiles/           Source/destination profiles and validation schema
+captures/           Raw traces, decoded captures, screenshots, and oscilloscope exports
+docs/               Shared lab documentation and durable decisions
+docs/targets/       Target-specific documentation staging area
+docs/projects/      Project-specific documentation staging area
+scripts/            Repeatable build, flash, recovery, and runtime scripts
+tools/              Local helper utilities and external assets
 ```
 
 ## Architecture Direction

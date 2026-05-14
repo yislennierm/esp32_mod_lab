@@ -63,6 +63,21 @@ PRODUCTION_MIRROR_MODE=2
 
 The current GBC project metadata now exposes all three build profiles through the workbench so build/flash actions no longer assume a single production-only deployment path.
 
+Current filesystem reality:
+
+- `projects/` is already the right place for deployable compositions
+- `profiles/` is already the right place for source/destination metadata
+- `host/workbench/` already behaves like shared lab infrastructure
+- `firmware/main/` is still carrying both lab and GBC-specific code, but the first compatibility-wrapped target slice now points `gbc_lcd_source.*` and `pinmap_gbc.h` at `firmware/targets/gbc_lcd/`
+- `host/targets/` and `docs/targets/` exist, but most active GBC implementation and documentation has not moved there yet
+
+Near-term filesystem policy:
+
+- create explicit split directories before moving known-good code
+- keep active firmware includes and scripts stable until each migration slice is tested
+- prefer wrapper or compatibility layers when moving target-specific host tools out of top-level `host/`
+- do not move evidence-heavy docs if it breaks artifact links or the historical investigation chain
+
 ## Next Steps
 
 - Move block metadata into explicit profile files once a second project exists.
