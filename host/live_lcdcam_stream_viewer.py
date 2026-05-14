@@ -7,15 +7,17 @@ import argparse
 import csv
 import json
 import mimetypes
+import os
 from pathlib import Path
 import signal
+import subprocess
 import threading
 import time
 from collections import Counter
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from analyze_timing_edges import summarize_capture
 from analyze_timing_relationships import analyze as analyze_timing_relationships
@@ -45,8 +47,8 @@ class LiveLcdcamState:
         self.port = port
         self.baud = baud
         self.timeout = timeout
-        self._client = ProbeClient(port, baud, timeout)
-        self._client.drain_startup()
+        self._client: ProbeClient | None = None
+        self._device_error = ""
         self.command = command
         self.data_mode = data_mode
         self.crop_offset = crop_offset
@@ -95,27 +97,68 @@ class LiveLcdcamState:
             "output_dir": "",
             "error": "",
         }
+        with self._serial_lock:
+            self._connect_serial_locked(clear_error=False)
+
+    def _connect_serial_locked(self, clear_error: bool) -> bool:
+        try:
+            self._client = ProbeClient(self.port, self.baud, self.timeout)
+            self._client.drain_startup()
+            self._device_error = ""
+            if clear_error:
+                with self._lock:
+                    self._latest_error = ""
+                    self._consecutive_errors = 0
+                    if self._source_state == "device_unavailable":
+                        self._source_state = "starting"
+            return True
+        except Exception as exc:
+            self._client = None
+            self._device_error = str(exc)
+            with self._lock:
+                self._source_state = "device_unavailable"
+                self._latest_error = self._device_error
+            return False
+
+    def _require_client_locked(self) -> ProbeClient:
+        if self._client is None:
+            raise ConnectionError(f"device unavailable on {self.port}: {self._device_error or 'not connected'}")
+        return self._client
 
     def close(self) -> None:
         self.stop_power_monitor()
         self.stop_boot_capture()
         self.stop_continuous(safe_idle=False)
-        self._client.close()
+        with self._serial_lock:
+            if self._client is not None:
+                self._client.close()
+                self._client = None
+
+    def release_serial_for_deploy(self) -> dict[str, Any]:
+        self.stop_power_monitor()
+        self.stop_boot_capture()
+        self.stop_continuous(isolate=True)
+        with self._serial_lock:
+            if self._client is not None:
+                self._client.close()
+                self._client = None
+        return {"ok": True, "port": self.port, "state": "serial_released_for_deploy"}
 
     def capture(self) -> dict[str, Any]:
         with self._serial_lock:
-            response = self._client.command(self.command)
+            response = self._require_client_locked().command(self.command)
         return dict(response.data)
 
     def capture_payload(self) -> tuple[bytes, dict[str, Any]]:
         with self._serial_lock:
+            client = self._require_client_locked()
             if self.firmware_binary:
-                response = self._client.command_binary(self.command)
+                response = client.command_binary(self.command)
                 payload = response.payload
                 metadata = dict(response.data)
                 metadata["transport"] = "firmware_binary"
             else:
-                response = self._client.command(self.command)
+                response = client.command(self.command)
                 payload, metadata = split_frame_payload(response.data, 0, 0)
         if self.crop_len > 0:
             end = min(len(payload), self.crop_offset + self.crop_len)
@@ -126,6 +169,11 @@ class LiveLcdcamState:
         return payload, metadata
 
     def start_continuous(self) -> dict[str, Any]:
+        if self._client is None:
+            with self._lock:
+                self._source_state = "device_unavailable"
+                self._latest_error = self._device_error or f"device unavailable on {self.port}"
+            return self.status(False)
         if self._capture_thread is not None and self._capture_thread.is_alive():
             return self.status(True)
         self._capture_stop.clear()
@@ -179,6 +227,9 @@ class LiveLcdcamState:
             source_waiting = is_running and self._source_state in {"no_signal", "clock_detected"}
             return {
                 "ok": source_waiting or not self._latest_error,
+                "device_connected": self._client is not None,
+                "device_error": self._device_error,
+                "serial_port": self.port,
                 "running": is_running if running is None else running,
                 "source_state": self._source_state,
                 "source_wait_ms": 0 if self._source_wait_since_monotonic <= 0 else int((time.monotonic() - self._source_wait_since_monotonic) * 1000),
@@ -224,7 +275,7 @@ class LiveLcdcamState:
                         f"LCDCAM_RAW_STREAM_BIN {self.stream_batch_size} "
                         f"{int(self.pclk_invert)} {self.data_mode} {emit_len}"
                     )
-                responses = self._client.command_binary_sequence(
+                responses = self._require_client_locked().command_binary_sequence(
                     stream_command,
                     self.stream_batch_size,
                 )
@@ -328,17 +379,17 @@ class LiveLcdcamState:
 
     def safe_idle(self) -> dict[str, Any]:
         with self._serial_lock:
-            response = self._client.command("SAFE_IDLE")
+            response = self._require_client_locked().command("SAFE_IDLE")
         return dict(response.data)
 
     def electrical_isolate(self) -> dict[str, Any]:
         with self._serial_lock:
-            response = self._client.command("ELECTRICAL_ISOLATE")
+            response = self._require_client_locked().command("ELECTRICAL_ISOLATE")
         return dict(response.data)
 
     def probe_command(self, command: str) -> dict[str, Any]:
         with self._serial_lock:
-            response = self._client.command(command)
+            response = self._require_client_locked().command(command)
         return dict(response.data)
 
     def read_gpio(self, gpio: int) -> dict[str, Any]:
@@ -686,7 +737,7 @@ class LiveLcdcamState:
         )
         start = time.monotonic()
         with self._serial_lock:
-            response = self._client.command(command)
+            response = self._require_client_locked().command(command)
         metadata = dict(response.data)
         data_hex = metadata.pop("data_hex", None)
         if not isinstance(data_hex, str):
@@ -710,13 +761,14 @@ class LiveLcdcamState:
         error = ""
         with self._serial_lock:
             try:
-                self._client.close()
+                if self._client is not None:
+                    self._client.close()
             except Exception:
                 pass
             try:
-                self._client = ProbeClient(self.port, self.baud, self.timeout)
-                self._client.drain_startup()
-                safe_idle_data = dict(self._client.command("SAFE_IDLE").data)
+                if not self._connect_serial_locked(clear_error=True):
+                    raise ConnectionError(self._device_error)
+                safe_idle_data = dict(self._require_client_locked().command("SAFE_IDLE").data)
             except Exception as exc:
                 error = str(exc)
                 with self._lock:
@@ -738,13 +790,14 @@ class LiveLcdcamState:
     def _recover_serial_locked_stopless(self) -> None:
         with self._serial_lock:
             try:
-                self._client.close()
+                if self._client is not None:
+                    self._client.close()
             except Exception:
                 pass
             try:
-                self._client = ProbeClient(self.port, self.baud, self.timeout)
-                self._client.drain_startup()
-                self._client.command("SAFE_IDLE")
+                if not self._connect_serial_locked(clear_error=True):
+                    raise ConnectionError(self._device_error)
+                self._require_client_locked().command("SAFE_IDLE")
                 with self._lock:
                     self._latest_error = "auto recovered after capture errors"
                     self._consecutive_errors = 0
@@ -1058,6 +1111,612 @@ def project_root_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def projects_dir() -> Path:
+    return project_root_dir() / "projects"
+
+
+def load_project_profiles() -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    root = projects_dir()
+    if not root.exists():
+        return items
+    for path in sorted(root.glob("*.json")):
+        try:
+            project = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(project, dict):
+                project["_path"] = str(path.relative_to(project_root_dir()))
+                items.append(project)
+        except Exception:
+            continue
+    return items
+
+
+def public_project(project: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in project.items() if k != "_path"}
+
+
+def project_path_for_id(project_id: str) -> Path:
+    if not project_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for ch in project_id):
+        raise ValueError("invalid_project_id")
+    return projects_dir() / f"{project_id}.json"
+
+
+def find_project(projects: list[dict[str, Any]], project_id: str) -> dict[str, Any]:
+    for project in projects:
+        if project.get("id") == project_id:
+            return project
+    raise ValueError(f"unknown_project:{project_id}")
+
+
+def create_project_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    project_id = str(payload.get("id") or "").strip()
+    name = str(payload.get("name") or project_id or "Untitled Project").strip()
+    if not project_id:
+        raise ValueError("id_required")
+    path = project_path_for_id(project_id)
+    if path.exists():
+        raise ValueError("project_exists")
+    project = {
+        "schema_version": "0.1",
+        "id": project_id,
+        "name": name,
+        "status": "draft",
+        "description": str(payload.get("description") or "Draft project created from the workbench."),
+        "source": payload.get("source") if isinstance(payload.get("source"), dict) else {"block": "unassigned_source", "profile": None},
+        "processing": payload.get("processing") if isinstance(payload.get("processing"), list) else [],
+        "destination": payload.get("destination") if isinstance(payload.get("destination"), dict) else {"block": "unassigned_destination", "profile": None},
+        "graph": payload.get("graph") if isinstance(payload.get("graph"), dict) else {"nodes": [], "edges": []},
+        "production": payload.get("production") if isinstance(payload.get("production"), dict) else {
+            "build_script": None,
+            "flash_script": None,
+            "default_env": {},
+            "known_good_command": None,
+        },
+        "evidence": payload.get("evidence") if isinstance(payload.get("evidence"), list) else [],
+        "known_limits": payload.get("known_limits") if isinstance(payload.get("known_limits"), list) else [],
+    }
+    projects_dir().mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(project, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    project["_path"] = str(path.relative_to(project_root_dir()))
+    return project
+
+
+def save_project_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    project_id = str(payload.get("id") or "").strip()
+    if not project_id:
+        raise ValueError("id_required")
+    path = project_path_for_id(project_id)
+    if not path.exists():
+        raise ValueError("project_not_found")
+    project = dict(payload)
+    project.pop("_path", None)
+    if project_id != project.get("id"):
+        raise ValueError("id_mismatch")
+    path.write_text(json.dumps(project, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    project["_path"] = str(path.relative_to(project_root_dir()))
+    return project
+
+
+def duplicate_project_profile(projects: list[dict[str, Any]], payload: dict[str, Any]) -> dict[str, Any]:
+    source_id = str(payload.get("source_id") or "").strip()
+    new_id = str(payload.get("id") or "").strip()
+    if not source_id or not new_id:
+        raise ValueError("source_id_and_id_required")
+    source = public_project(find_project(projects, source_id))
+    source["id"] = new_id
+    source["name"] = str(payload.get("name") or f"{source.get('name', source_id)} Copy")
+    source["status"] = "draft"
+    return create_project_profile(source)
+
+
+def slugify_project_id(value: str) -> str:
+    slug = []
+    for ch in value.lower():
+        if ch.isalnum():
+            slug.append(ch)
+        elif ch in {"/", "-", ".", " "}:
+            slug.append("_")
+    collapsed = "_".join(part for part in "".join(slug).split("_") if part)
+    return collapsed[:96] or "idf_example"
+
+
+def graph_nodes_for_idf_example(example: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    api_groups = [str(item) for item in example.get("api_groups", []) if isinstance(item, str)]
+    mcu_blocks = [str(item) for item in example.get("mcu_blocks", []) if isinstance(item, str)]
+    components = [str(item) for item in example.get("components", []) if isinstance(item, str)]
+
+    block_labels = {
+        "freertos": "Application Task",
+        "gpio": "GPIO Control",
+        "spi_master": "SPI Master Bus",
+        "esp_lcd": "LCD Panel Driver",
+        "camera": "Camera Source",
+        "isp": "Image Signal Processor",
+        "ppa": "Pixel Processing Accelerator",
+        "jpeg": "JPEG/Image Decoder",
+        "parlio": "Parallel IO Port",
+        "tinyusb": "USB Device Stack",
+        "usb_serial_jtag": "USB Serial/JTAG Console",
+        "uart": "UART Link",
+        "i2c": "I2C Control Bus",
+        "i2s": "I2S Audio/Data Port",
+        "rmt": "RMT Waveform Engine",
+        "gptimer": "Timer Source",
+        "ledc": "PWM/LEDC Output",
+        "psram": "External Frame/Work Buffer",
+        "bitscrambler": "Bitstream Formatter",
+    }
+    external_labels = []
+    lowered_id = str(example.get("id", "")).lower()
+    if any(group in api_groups for group in ("esp_lcd", "spi_master")) and "lcd" in lowered_id:
+        external_labels.append("External LCD Panel")
+    if "camera" in api_groups:
+        external_labels.append("External Camera/Sensor")
+    if "tinyusb" in api_groups:
+        external_labels.append("USB Host Computer")
+    if "i2c" in api_groups:
+        external_labels.append("I2C Peripheral")
+    if "i2s" in api_groups:
+        external_labels.append("Audio Codec / I2S Device")
+
+    nodes: list[dict[str, Any]] = [
+        {
+            "id": "system_intent",
+            "type": "system_intent",
+            "label": str(example.get("id", "ESP-IDF Example")),
+            "position": {"x": 0, "y": 220},
+            "params": {
+                "role": "imported_example_intent",
+                "path": example.get("path"),
+            },
+        },
+    ]
+    edges: list[dict[str, Any]] = []
+
+    for index, group in enumerate(api_groups[:10]):
+        node_id = f"block_{index}_{slugify_project_id(group)}"
+        params = {
+            "api_group": group,
+            "components": components,
+        }
+        if group == "freertos":
+            params["overlay"] = {
+                "editable": True,
+                "block_kind": "rtos_task",
+                "task_name": "app_main",
+                "priority": 5,
+                "stack_size_bytes": 4096,
+                "core_affinity": "any",
+                "enabled": True,
+                "notes": "Imported SDK example task overlay. Source remains read-only until explicit graph generation exists.",
+                "source_write_policy": "overlay_only",
+            }
+        nodes.append({
+            "id": node_id,
+            "type": "lab_function_block",
+            "label": block_labels.get(group, group),
+            "position": {"x": 330 + index * 230, "y": 220 if index % 2 == 0 else 380},
+            "params": params,
+        })
+        edges.append({
+            "id": f"system_intent_{node_id}",
+            "from": "system_intent.out",
+            "to": f"{node_id}.in",
+            "label": "uses",
+        })
+
+    group_node_ids = {
+        group: f"block_{index}_{slugify_project_id(group)}"
+        for index, group in enumerate(api_groups[:10])
+    }
+    if "jpeg" in group_node_ids and "spi_master" in group_node_ids:
+        edges.append({
+            "id": "jpeg_spi_pixels",
+            "from": f"{group_node_ids['jpeg']}.out",
+            "to": f"{group_node_ids['spi_master']}.in",
+            "label": "pixels",
+        })
+    if "esp_lcd" in group_node_ids and "spi_master" in group_node_ids:
+        edges.append({
+            "id": "lcd_spi_panel_io",
+            "from": f"{group_node_ids['esp_lcd']}.out",
+            "to": f"{group_node_ids['spi_master']}.in",
+            "label": "panel_io",
+        })
+    if "gpio" in group_node_ids and "spi_master" in group_node_ids:
+        edges.append({
+            "id": "gpio_spi_control",
+            "from": f"{group_node_ids['gpio']}.out",
+            "to": f"{group_node_ids['spi_master']}.in",
+            "label": "control_pins",
+        })
+    if "camera" in group_node_ids and "isp" in group_node_ids:
+        edges.append({
+            "id": "camera_isp_pixels",
+            "from": f"{group_node_ids['camera']}.out",
+            "to": f"{group_node_ids['isp']}.in",
+            "label": "pixels",
+        })
+    if "isp" in group_node_ids and "ppa" in group_node_ids:
+        edges.append({
+            "id": "isp_ppa_pixels",
+            "from": f"{group_node_ids['isp']}.out",
+            "to": f"{group_node_ids['ppa']}.in",
+            "label": "pixels",
+        })
+
+    resource_affinity = {
+        "freertos": ["freertos"],
+        "gpio": ["gpio"],
+        "spi_master": ["spi", "gdma", "dma"],
+        "esp_lcd": ["lcd", "rgb lcd", "mipi dsi", "i80", "spi", "gdma"],
+        "camera": ["cam", "lcd_cam", "gdma", "psram"],
+        "isp": ["isp", "gdma", "psram"],
+        "ppa": ["ppa", "dma", "psram"],
+        "jpeg": ["jpeg", "dma", "psram"],
+        "parlio": ["parlio", "gpio", "gdma"],
+        "tinyusb": ["usb", "tinyusb"],
+        "usb_serial_jtag": ["usb serial", "usb"],
+        "uart": ["uart", "gpio"],
+        "i2c": ["i2c", "gpio"],
+        "i2s": ["i2s", "gpio", "gdma"],
+        "rmt": ["rmt", "gpio"],
+        "gptimer": ["timer"],
+        "ledc": ["ledc", "gpio"],
+        "psram": ["psram", "heap"],
+        "bitscrambler": ["bitscrambler", "dma"],
+    }
+    for index, block in enumerate(mcu_blocks[:14]):
+        node_id = f"mcu_{index}_{slugify_project_id(block)}"
+        block_key = block.lower().replace("/", " ")
+        nodes.append({
+            "id": node_id,
+            "type": "esp32p4_resource",
+            "label": block,
+            "position": {"x": 330 + (index % 7) * 210, "y": 620 + (index // 7) * 120},
+            "params": {
+                "resource_claim": "inferred",
+                "confidence": "metadata",
+            },
+        })
+        for group, function_id in group_node_ids.items():
+            terms = resource_affinity.get(group, [group.replace("_", " ")])
+            if any(term in block_key for term in terms):
+                edges.append({
+                    "id": f"{function_id}_{node_id}",
+                    "from": f"{function_id}.out",
+                    "to": f"{node_id}.in",
+                    "label": "claims",
+                })
+                break
+
+    for index, label in enumerate(external_labels[:6]):
+        node_id = f"external_{index}_{slugify_project_id(label)}"
+        nodes.append({
+            "id": node_id,
+            "type": "external_device",
+            "label": label,
+            "position": {"x": 330 + index * 260, "y": 40},
+            "params": {
+                "role": "external_hardware",
+            },
+        })
+        preferred_driver = None
+        for group in ("spi_master", "esp_lcd", "tinyusb", "camera", "i2c", "i2s", "uart", "gpio"):
+            if group in group_node_ids:
+                preferred_driver = group_node_ids[group]
+                break
+        if preferred_driver:
+            edges.append({
+                "id": f"{preferred_driver}_{node_id}",
+                "from": f"{preferred_driver}.out",
+                "to": f"{node_id}.in",
+                "label": "drives" if "LCD" in label or "USB" in label else "connects",
+            })
+
+    if not api_groups:
+        nodes.append({
+            "id": "unmapped_function",
+            "type": "unmapped_function",
+            "label": "Unmapped Function",
+            "position": {"x": 330, "y": 220},
+            "params": {"reason": "No known functional block detected"},
+        })
+        edges.append({
+            "id": "intent_unmapped",
+            "from": "system_intent.out",
+            "to": "unmapped_function.in",
+            "label": "unknown",
+        })
+    return nodes, edges
+
+
+def import_idf_example_project(example_id: str) -> dict[str, Any]:
+    inventory = read_inventory_json(inventory_path("sdk_inventory/esp-idf-v5.5-esp32p4.json"))
+    examples = inventory.get("examples", [])
+    example = next((item for item in examples if item.get("id") == example_id), None)
+    if not isinstance(example, dict):
+        raise ValueError(f"example_not_found:{example_id}")
+    project_id = f"idf_{slugify_project_id(example_id)}"
+    path = project_path_for_id(project_id)
+    nodes, edges = graph_nodes_for_idf_example(example)
+    project = {
+        "schema_version": "0.1",
+        "id": project_id,
+        "name": f"ESP-IDF: {example_id}",
+        "status": "imported_sdk_example_read_only",
+        "description": "Imported from the local ESP-IDF SDK inventory. Source files remain read-only references until graph-to-firmware generation is implemented.",
+        "source": {
+            "block": "esp_idf_example",
+            "profile": None,
+        },
+        "processing": [
+            {"block": group, "profile": None}
+            for group in example.get("api_groups", [])
+        ],
+        "destination": {
+            "block": "unassigned_destination",
+            "profile": None,
+        },
+        "mcu_blocks": example.get("mcu_blocks", []),
+        "graph": {
+            "nodes": nodes,
+            "edges": edges,
+        },
+        "production": {
+            "build_script": None,
+            "flash_script": None,
+            "default_env": {},
+            "known_good_command": None,
+        },
+        "sdk_example": {
+            "inventory": "sdk_inventory/esp-idf-v5.5-esp32p4.json",
+            "id": example.get("id"),
+            "path": example.get("path"),
+            "read_only": True,
+            "categories": example.get("categories", []),
+            "api_groups": example.get("api_groups", []),
+            "components": example.get("components", []),
+            "mcu_blocks": example.get("mcu_blocks", []),
+            "source_files": example.get("source_files", []),
+            "sdkconfig_defaults": example.get("sdkconfig_defaults", []),
+            "cmake_files": example.get("cmake_files", []),
+        },
+        "evidence": [
+            "docs/esp_idf_inventory_import_plan.md",
+            "docs/sdk_inventory_artifacts.md",
+        ],
+        "known_limits": [
+            "Imported project is read-only with respect to ESP-IDF source files.",
+            "Graph is inferred from inventory metadata and may not capture full C semantics.",
+            "Build/flash integration for imported SDK examples is not implemented yet.",
+        ],
+    }
+    projects_dir().mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(existing, dict):
+            existing_status = str(existing.get("status", ""))
+            existing_sdk = existing.get("sdk_example") if isinstance(existing.get("sdk_example"), dict) else {}
+            if existing_status.startswith("imported_sdk_example") and existing_sdk.get("id") == example_id:
+                path.write_text(json.dumps(project, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+            else:
+                existing["_path"] = str(path.relative_to(project_root_dir()))
+                return existing
+    path.write_text(json.dumps(project, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    project["_path"] = str(path.relative_to(project_root_dir()))
+    return project
+
+
+def delete_project_profile(project_id: str) -> dict[str, Any]:
+    path = project_path_for_id(project_id)
+    if not path.exists():
+        raise ValueError("project_not_found")
+    path.unlink()
+    return {"ok": True, "id": project_id, "path": str(path.relative_to(project_root_dir()))}
+
+
+def block_registry(profile: dict[str, Any], destination_profile: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "gbc_lcd_source",
+            "name": "Profile Display-Bus Source",
+            "kind": "source",
+            "status": "validated",
+            "profile": "profiles/gbc_lcd.json",
+            "firmware_module": "firmware/main/gbc_lcd_source.c",
+            "evidence": ["docs/protocol_discoveries.md", "docs/experiment_log.md"],
+        },
+        {
+            "id": "source_capture",
+            "name": "LCD_CAM Source Capture",
+            "kind": "processing",
+            "status": "active",
+            "profile": str(profile.get("profile_id", "gbc_lcd")),
+            "firmware_module": "firmware/main/lcdcam_raw.c",
+            "evidence": ["docs/capture_pipeline.md"],
+        },
+        {
+            "id": "spi_lcd_destination",
+            "name": "Profile Display Destination",
+            "kind": "destination",
+            "status": str(destination_profile.get("status", "draft")),
+            "profile": "profiles/spi_lcd_destination.json",
+            "firmware_module": "firmware/main/destination_spi_lcd.c",
+            "evidence": ["docs/destination_spi_lcd_lab.md"],
+        },
+        {
+            "id": "production_mirror",
+            "name": "Source-to-Destination Runtime",
+            "kind": "transport",
+            "status": "working_baseline",
+            "firmware_module": "firmware/main/production_mirror.c",
+            "evidence": ["docs/production_modes.md", "CODEX_HANDOFF.md"],
+        },
+    ]
+
+
+def destination_gpio_rows(destination_profile: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for pin in destination_profile.get("connector", {}).get("pins", []):
+        if not isinstance(pin, dict):
+            continue
+        gpio = pin.get("esp32p4_gpio")
+        role = str(pin.get("role", ""))
+        if isinstance(gpio, int) and role not in {"power", "ground", "backlight_power"}:
+            rows.append({"signal": str(pin.get("name", "?")), "gpio": gpio, "role": role})
+    return rows
+
+
+def validate_project_profile(
+    project: dict[str, Any],
+    profile: dict[str, Any],
+    destination_profile: dict[str, Any],
+) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    source_rows = [
+        {"signal": row["signal"], "gpio": row["gpio"]}
+        for row in profile_gpio_rows(profile)
+        if isinstance(row.get("gpio"), int)
+    ]
+    destination_rows = destination_gpio_rows(destination_profile)
+    source_by_gpio = {row["gpio"]: row["signal"] for row in source_rows}
+    seen_destination: dict[int, str] = {}
+    for row in destination_rows:
+        gpio = int(row["gpio"])
+        if gpio in source_by_gpio:
+            errors.append(f"destination {row['signal']} GPIO{gpio} conflicts with source {source_by_gpio[gpio]}")
+        if gpio in seen_destination:
+            errors.append(f"destination {row['signal']} duplicates GPIO{gpio} used by {seen_destination[gpio]}")
+        seen_destination[gpio] = str(row["signal"])
+    production = project.get("production", {})
+    if not isinstance(production, dict) or not production.get("build_script") or not production.get("flash_script"):
+        warnings.append("project has no complete production build/flash script metadata")
+    if not destination_rows:
+        warnings.append("destination profile has no active output GPIOs")
+    return {
+        "ok": not errors,
+        "project_id": project.get("id", ""),
+        "errors": errors,
+        "warnings": warnings,
+        "source_gpios": source_rows,
+        "destination_gpios": destination_rows,
+    }
+
+
+def run_project_script(project: dict[str, Any], action: str, port: str | None = None) -> dict[str, Any]:
+    production = project.get("production", {})
+    if not isinstance(production, dict):
+        raise ValueError("project_missing_production")
+    script_key = "build_script" if action == "build" else "flash_script"
+    script = production.get(script_key)
+    if not isinstance(script, str) or not script:
+        raise ValueError(f"project_missing_{script_key}")
+    script_path = project_root_dir() / script
+    if not script_path.exists():
+        raise ValueError(f"script_not_found:{script}")
+    env = dict(**{k: str(v) for k, v in production.get("default_env", {}).items()}) if isinstance(production.get("default_env"), dict) else {}
+    command = [str(script_path)]
+    if action == "flash":
+        if not port:
+            raise ValueError("serial_port_required")
+        command.append(port)
+    completed = subprocess.run(
+        command,
+        cwd=project_root_dir(),
+        env={**dict(os.environ), **env},
+        text=True,
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    return {
+        "ok": completed.returncode == 0,
+        "project_id": project.get("id", ""),
+        "action": action,
+        "command": command,
+        "returncode": completed.returncode,
+        "stdout": completed.stdout[-12000:],
+        "stderr": completed.stderr[-12000:],
+    }
+
+
+def inventory_path(name: str) -> Path:
+    return project_root_dir() / name
+
+
+def read_inventory_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(f"inventory_not_found:{path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def compact_sdk_example(example: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": example.get("id", ""),
+        "name": example.get("name", ""),
+        "path": example.get("path", ""),
+        "category_path": example.get("category_path", ""),
+        "relevance": example.get("relevance", "track"),
+        "categories": example.get("categories", []),
+        "api_groups": example.get("api_groups", []),
+        "components": example.get("components", []),
+        "mcu_blocks": example.get("mcu_blocks", []),
+        "source_file_count": example.get("source_file_count", 0),
+        "sdkconfig_defaults": example.get("sdkconfig_defaults", []),
+        "import_status": example.get("import_status", "candidate"),
+    }
+
+
+def filter_sdk_examples(examples: list[dict[str, Any]], query: dict[str, list[str]]) -> list[dict[str, Any]]:
+    category = (query.get("category") or [""])[0].strip().lower()
+    relevance = (query.get("relevance") or [""])[0].strip().lower()
+    api_group = (query.get("api_group") or [""])[0].strip().lower()
+    mcu_block = (query.get("mcu_block") or [""])[0].strip().lower()
+    search = (query.get("q") or [""])[0].strip().lower()
+    filtered = []
+    for example in examples:
+        haystack = " ".join(
+            [
+                str(example.get("id", "")),
+                str(example.get("path", "")),
+                " ".join(str(item) for item in example.get("categories", [])),
+                " ".join(str(item) for item in example.get("api_groups", [])),
+                " ".join(str(item) for item in example.get("mcu_blocks", [])),
+                " ".join(str(item) for item in example.get("components", [])),
+            ]
+        ).lower()
+        if category and category not in [str(item).lower() for item in example.get("categories", [])]:
+            continue
+        if relevance and relevance != str(example.get("relevance", "")).lower():
+            continue
+        if api_group and api_group not in [str(item).lower() for item in example.get("api_groups", [])]:
+            continue
+        if mcu_block and mcu_block not in [str(item).lower() for item in example.get("mcu_blocks", [])]:
+            continue
+        if search and search not in haystack:
+            continue
+        filtered.append(example)
+    return filtered
+
+
+def compact_espressif_repo(repo: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": repo.get("name", ""),
+        "full_name": repo.get("full_name", ""),
+        "html_url": repo.get("html_url", ""),
+        "description": repo.get("description", ""),
+        "language": repo.get("language", ""),
+        "topics": repo.get("topics", []),
+        "stars": repo.get("stars", 0),
+        "forks": repo.get("forks", 0),
+        "archived": repo.get("archived", False),
+        "categories": repo.get("categories", []),
+        "relevance": repo.get("relevance", "track"),
+    }
+
+
 def make_handler(
     state: LiveLcdcamState,
     interval_ms: int,
@@ -1088,6 +1747,8 @@ def make_handler(
         for row in profile_gpio_list
         if "line_marker_candidate" in row.get("role", "")
     } or {"LP", "SPL"}
+    projects = load_project_profiles()
+    blocks = block_registry(profile, destination_profile)
 
     def destination_signal(query: dict[str, list[str]]) -> str:
         signal_name = (query.get("signal") or [""])[0].strip()
@@ -1157,6 +1818,81 @@ def make_handler(
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
             path = parsed.path
+            if path in {"/api/projects/create", "/api/projects/save", "/api/projects/duplicate", "/api/projects/delete"}:
+                action = path.rsplit("/", 1)[-1]
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 128 * 1024:
+                        raise ValueError("invalid_content_length")
+                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                    if action == "create":
+                        project = create_project_profile(payload)
+                    elif action == "save":
+                        project = save_project_profile(payload)
+                    elif action == "duplicate":
+                        project = duplicate_project_profile(load_project_profiles(), payload)
+                    else:
+                        project_id = str(payload.get("id") or "").strip()
+                        if project_id == "gbc_spi_lcd_mirror" and payload.get("confirm") != project_id:
+                            raise ValueError("confirm_required_for_gbc_project")
+                        result = delete_project_profile(project_id)
+                        self.send_body(200, "application/json", json.dumps({
+                            **result,
+                            "projects": [public_project(item) for item in load_project_profiles()],
+                        }).encode("utf-8"))
+                        return
+                    self.send_body(200, "application/json", json.dumps({
+                        "ok": True,
+                        "project": public_project(project),
+                        "projects": [public_project(item) for item in load_project_profiles()],
+                    }).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "action": action, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/projects/import-idf-example":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 8 * 1024:
+                        raise ValueError("invalid_content_length")
+                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                    example_id = str(payload.get("id") or payload.get("example_id") or "").strip()
+                    if not example_id:
+                        raise ValueError("example_id_required")
+                    project = import_idf_example_project(example_id)
+                    self.send_body(200, "application/json", json.dumps({
+                        "ok": True,
+                        "project": public_project(project),
+                        "projects": [public_project(item) for item in load_project_profiles()],
+                    }).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "action": "import-idf-example", "error": str(exc)}).encode("utf-8"))
+                return
+            if path in {"/api/projects/build", "/api/projects/flash"}:
+                action = "build" if path.endswith("/build") else "flash"
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 8 * 1024:
+                        raise ValueError("invalid_content_length")
+                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                    project_id = str(payload.get("id", "")).strip()
+                    project = find_project(projects, project_id)
+                    validation = validate_project_profile(project, profile, destination_profile)
+                    if not validation["ok"]:
+                        self.send_body(400, "application/json", json.dumps({
+                            "ok": False,
+                            "project_id": project_id,
+                            "action": action,
+                            "error": "validation_failed",
+                            "validation": validation,
+                        }).encode("utf-8"))
+                        return
+                    if action == "flash":
+                        state.release_serial_for_deploy()
+                    result = run_project_script(project, action, state.port if action == "flash" else None)
+                    self.send_body(200 if result.get("ok") else 500, "application/json", json.dumps(result).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(500, "application/json", json.dumps({"ok": False, "action": action, "error": str(exc)}).encode("utf-8"))
+                return
             if path == "/api/destination-profile":
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
@@ -1193,6 +1929,114 @@ def make_handler(
                 return
             if path == "/api/profile":
                 self.send_body(200, "application/json", json.dumps(profile).encode("utf-8"))
+                return
+            if path == "/api/blocks":
+                self.send_body(200, "application/json", json.dumps({"ok": True, "blocks": blocks}).encode("utf-8"))
+                return
+            if path == "/api/projects":
+                self.send_body(200, "application/json", json.dumps({
+                    "ok": True,
+                    "projects": [public_project(project) for project in load_project_profiles()],
+                }).encode("utf-8"))
+                return
+            if path == "/api/projects/validate":
+                query = parse_qs(parsed.query)
+                try:
+                    project_id = (query.get("id") or [""])[0].strip()
+                    project = find_project(projects, project_id)
+                    self.send_body(200, "application/json", json.dumps(
+                        validate_project_profile(project, profile, destination_profile)
+                    ).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/sdk/idf":
+                try:
+                    inventory = read_inventory_json(inventory_path("sdk_inventory/esp-idf-v5.5-esp32p4.json"))
+                    self.send_body(200, "application/json", json.dumps({
+                        "ok": True,
+                        "schema": inventory.get("schema"),
+                        "generated_at": inventory.get("generated_at"),
+                        "source": inventory.get("source", {}),
+                        "summary": inventory.get("summary", {}),
+                        "classification": inventory.get("classification", {}),
+                    }).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(404, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/sdk/components":
+                try:
+                    inventory = read_inventory_json(inventory_path("sdk_inventory/esp-idf-v5.5-esp32p4.json"))
+                    components = inventory.get("components", [])
+                    self.send_body(200, "application/json", json.dumps({
+                        "ok": True,
+                        "count": len(components),
+                        "components": components,
+                    }).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(404, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/sdk/examples" or path.startswith("/api/sdk/examples/"):
+                try:
+                    inventory = read_inventory_json(inventory_path("sdk_inventory/esp-idf-v5.5-esp32p4.json"))
+                    examples = inventory.get("examples", [])
+                    query = parse_qs(parsed.query)
+                    example_id = (query.get("id") or [""])[0].strip()
+                    if path.startswith("/api/sdk/examples/"):
+                        example_id = unquote(path.removeprefix("/api/sdk/examples/")).strip()
+                    if example_id:
+                        example = next((item for item in examples if item.get("id") == example_id), None)
+                        if example is None:
+                            raise FileNotFoundError(f"example_not_found:{example_id}")
+                        self.send_body(200, "application/json", json.dumps({
+                            "ok": True,
+                            "example": example,
+                        }).encode("utf-8"))
+                        return
+                    filtered = filter_sdk_examples(examples, query)
+                    limit = min(max(int((query.get("limit") or ["200"])[0]), 1), 1000)
+                    self.send_body(200, "application/json", json.dumps({
+                        "ok": True,
+                        "count": len(filtered),
+                        "examples": [compact_sdk_example(item) for item in filtered[:limit]],
+                    }).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(404, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/research/espressif/repos":
+                try:
+                    inventory = read_inventory_json(inventory_path("inventories/espressif_github_repositories.json"))
+                    query = parse_qs(parsed.query)
+                    repos = inventory.get("repositories", [])
+                    relevance = (query.get("relevance") or [""])[0].strip().lower()
+                    category = (query.get("category") or [""])[0].strip().lower()
+                    search = (query.get("q") or [""])[0].strip().lower()
+                    filtered = []
+                    for repo in repos:
+                        haystack = " ".join([
+                            str(repo.get("name", "")),
+                            str(repo.get("full_name", "")),
+                            str(repo.get("description", "")),
+                            " ".join(str(item) for item in repo.get("categories", [])),
+                            " ".join(str(item) for item in repo.get("topics", [])),
+                        ]).lower()
+                        if relevance and relevance != str(repo.get("relevance", "")).lower():
+                            continue
+                        if category and category not in [str(item).lower() for item in repo.get("categories", [])]:
+                            continue
+                        if search and search not in haystack:
+                            continue
+                        filtered.append(repo)
+                    limit = min(max(int((query.get("limit") or ["200"])[0]), 1), 1000)
+                    self.send_body(200, "application/json", json.dumps({
+                        "ok": True,
+                        "generated_at": inventory.get("generated_at"),
+                        "summary": inventory.get("summary", {}),
+                        "count": len(filtered),
+                        "repositories": [compact_espressif_repo(item) for item in filtered[:limit]],
+                    }).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(404, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
                 return
             if path == "/api/destination-profile":
                 self.send_body(200, "application/json", json.dumps(destination_profile).encode("utf-8"))
@@ -1587,7 +2431,13 @@ def make_handler(
 
 
 def run(args: argparse.Namespace) -> int:
-    port = args.port or autodetect_port()
+    if args.port:
+        port = args.port
+    else:
+        try:
+            port = autodetect_port()
+        except Exception:
+            port = "offline"
     profile = load_profile(args.profile)
     destination_profile = load_profile(args.destination_profile)
     bytes_per_sample = 2 if args.data_mode in {"RGB664", "RGB565"} else 1

@@ -16,19 +16,19 @@ body,
   z-index: 10;
   display: flex;
   align-items: center;
-  height: 52px;
-  padding: 0 18px;
+  height: 46px;
+  padding: 0 12px;
   border-bottom: 1px solid #26323d;
 }
 
 .appSider {
-  min-height: calc(100vh - 52px);
+  min-height: calc(100vh - 46px);
   border-right: 1px solid #26323d;
 }
 
 .appContent {
   min-width: 0;
-  padding: 16px;
+  padding: 10px;
 }
 
 .pageStack,
@@ -39,13 +39,357 @@ body,
 .statsGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
+}
+
+.metricStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.metricItem {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #26323d;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.metricItem .ant-typography {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .destinationGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 10px;
+}
+
+.projectGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 10px;
+}
+
+.sdkGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.85fr);
+  gap: 10px;
+}
+
+.sdkSummaryCard .ant-card-body {
+  padding: 6px 8px;
+}
+
+.sdkSummaryBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.sdkSummaryBar .metricStrip {
+  grid-template-columns: repeat(4, minmax(86px, 1fr));
+  gap: 6px;
+}
+
+.sdkSummaryBar .metricItem {
+  padding: 5px 8px;
+}
+
+.sdkSummaryActions {
+  justify-content: end;
+}
+
+.sdkWorkbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 8px;
+  min-height: calc(100vh - 146px);
+}
+
+.sdkBrowserCard,
+.sdkInspectorCard {
+  min-width: 0;
+}
+
+.sdkBrowserCard .ant-card-body,
+.sdkInspectorCard .ant-card-body {
+  padding: 7px;
+}
+
+.sdkBrowserCard .ant-card-head,
+.sdkInspectorCard .ant-card-head {
+  min-height: 34px;
+  padding-inline: 8px;
+}
+
+.sdkInspectorCard {
+  align-self: start;
+  position: sticky;
+  top: 58px;
+}
+
+.sdkFilterRow,
+.repoFilterRow {
+  display: grid;
+  gap: 6px;
+  align-items: center;
+}
+
+.sdkFilterRow {
+  grid-template-columns: minmax(190px, 1fr) 108px 142px 132px 146px 32px;
+}
+
+.repoFilterRow {
+  grid-template-columns: minmax(190px, 1fr) 108px 158px 32px;
+}
+
+.clickableTableRow {
+  cursor: pointer;
+}
+
+.selectedTableRow > td {
+  background: rgba(22, 119, 255, 0.12) !important;
+}
+
+.tagSection {
+  display: grid;
+  gap: 5px;
+}
+
+.sdkBrowserCard .ant-table-small .ant-table-cell {
+  padding-block: 4px;
+}
+
+.sdkBrowserCard .ant-tag,
+.sdkInspectorCard .ant-tag,
+.sdkSummaryCard .ant-tag {
+  margin-inline-end: 2px;
+}
+
+.graphWorkspace {
+  position: relative;
+  min-height: calc(100vh - 66px);
+  overflow: hidden;
+  border: 1px solid #26323d;
+  border-radius: 6px;
+  background: #0b1015;
+}
+
+.graphTopBar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  left: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(49, 64, 77, 0.86);
+  border-radius: 6px;
+  background: rgba(18, 26, 33, 0.9);
+  backdrop-filter: blur(6px);
+}
+
+.graphSurface {
+  height: calc(100vh - 66px);
+  min-height: 680px;
+}
+
+.flowCanvas {
+  width: 100%;
+  height: 100%;
+  background: #0b1015;
+}
+
+.graphInspectorDrawer {
+  position: absolute;
+  top: 56px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 6;
+  width: min(390px, calc(100vw - 260px));
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid #31404d;
+  border-radius: 6px;
+  background: rgba(18, 26, 33, 0.96);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+  transform: translateX(calc(100% + 18px));
+  transition: transform 160ms ease;
+}
+
+.graphWorkspace.inspectorOpen .graphInspectorDrawer {
+  transform: translateX(0);
+}
+
+.drawerTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.flowCanvas .react-flow__node {
+  min-width: 220px;
+  border: 1px solid #31404d;
+  border-radius: 6px;
+  background: #121a21;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.flowCanvas .react-flow__node.selected {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 1px rgba(22, 119, 255, 0.65), 0 0 18px rgba(22, 119, 255, 0.18);
+}
+
+.flowCanvas .react-flow__node.flowNodeType-esp32p4_resource {
+  border-color: rgba(114, 46, 209, 0.62);
+}
+
+.flowCanvas .react-flow__node.flowNodeType-external_device {
+  border-color: rgba(82, 196, 26, 0.62);
+}
+
+.flowCanvas .react-flow__node.flowNodeType-lab_function_block {
+  border-color: rgba(22, 119, 255, 0.58);
+}
+
+.flowCanvas .react-flow__node.flowNodeType-system_intent {
+  border-color: rgba(250, 173, 20, 0.7);
+}
+
+.flowCanvas .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid #31404d;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.flowCanvas .react-flow__controls-button {
+  border-bottom-color: #31404d;
+  background: #121a21;
+  color: rgba(255, 255, 255, 0.88);
+  fill: rgba(255, 255, 255, 0.88);
+}
+
+.flowCanvas .react-flow__controls-button:hover {
+  background: #1d2a34;
+}
+
+.flowCanvas .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.flowCanvas .react-flow__attribution {
+  background: rgba(18, 26, 33, 0.88);
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.flowCanvas .react-flow__edge-textbg {
+  fill: #0b1015;
+}
+
+.flowCanvas .react-flow__edge-text {
+  fill: rgba(255, 255, 255, 0.78);
+}
+
+.flowCanvas .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: #4ea37b;
+}
+
+.flowNode {
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+}
+
+.inspectorEditorCard {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.inspectorSummaryCard {
+  background: rgba(22, 119, 255, 0.055);
+}
+
+.editorLabel {
+  display: inline-block;
+  min-width: 92px;
+  font-size: 12px;
+}
+
+.editorHeaderRow {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.mcuDashboard {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mcuRegion {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #26323d;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.mcuRegionTitle {
+  margin-bottom: 8px;
+  color: rgba(255, 255, 255, 0.86);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.mcuBlockGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mcuBlock {
+  margin-inline-end: 0;
+}
+
+.mcuBlockActive {
+  box-shadow: 0 0 0 1px rgba(78, 163, 123, 0.38), 0 0 14px rgba(78, 163, 123, 0.16);
+}
+
+.ant-card-small > .ant-card-head {
+  min-height: 36px;
+}
+
+.ant-card-small > .ant-card-body {
+  padding: 10px;
+}
+
+.ant-tabs-small > .ant-tabs-nav {
+  margin-bottom: 10px;
+}
+
+.compactCollapse {
+  margin-top: 8px;
+}
+
+.compactForm .ant-form-item {
+  margin-bottom: 10px;
+}
+
+.ant-table-small .ant-table-cell {
+  padding-block: 5px;
 }
 
 .gpioInput {
@@ -104,8 +448,8 @@ body,
 
 .liveGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 10px;
 }
 
 .liveCard .ant-card-body {
@@ -115,8 +459,8 @@ body,
 .nativeLiveSurface {
   display: grid;
   place-items: center;
-  min-height: calc(100vh - 150px);
-  padding: 12px;
+  min-height: calc(100vh - 112px);
+  padding: 10px;
   overflow: auto;
   background: #050607;
 }
@@ -167,9 +511,31 @@ body,
 
 @media (max-width: 1050px) {
   .statsGrid,
+  .metricStrip,
   .liveGrid,
-  .destinationGrid {
+  .destinationGrid,
+  .projectGrid,
+  .sdkGrid,
+  .sdkWorkbench,
+  .mcuDashboard {
     grid-template-columns: 1fr;
+  }
+
+  .sdkSummaryBar {
+    grid-template-columns: 1fr;
+  }
+
+  .sdkInspectorCard {
+    position: static;
+  }
+
+  .sdkFilterRow,
+  .repoFilterRow {
+    grid-template-columns: 1fr;
+  }
+
+  .graphInspectorDrawer {
+    width: calc(100vw - 42px);
   }
 
   .appSider {

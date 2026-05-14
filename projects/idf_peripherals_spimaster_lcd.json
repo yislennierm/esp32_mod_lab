@@ -1,0 +1,378 @@
+{
+  "schema_version": "0.1",
+  "id": "idf_peripherals_spimaster_lcd",
+  "name": "ESP-IDF: peripherals/spi_master/lcd",
+  "status": "imported_sdk_example_read_only",
+  "description": "Imported from the local ESP-IDF SDK inventory. Source files remain read-only references until graph-to-firmware generation is implemented.",
+  "source": {
+    "block": "esp_idf_example",
+    "profile": null
+  },
+  "processing": [
+    {
+      "block": "freertos",
+      "profile": null
+    },
+    {
+      "block": "gpio",
+      "profile": null
+    },
+    {
+      "block": "jpeg",
+      "profile": null
+    },
+    {
+      "block": "spi_master",
+      "profile": null
+    }
+  ],
+  "destination": {
+    "block": "unassigned_destination",
+    "profile": null
+  },
+  "mcu_blocks": [
+    "FreeRTOS",
+    "GDMA",
+    "GPIO Matrix / IO MUX",
+    "Internal DMA RAM",
+    "JPEG",
+    "PSRAM",
+    "SPI"
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "system_intent",
+        "type": "system_intent",
+        "label": "peripherals/spi_master/lcd",
+        "position": {
+          "x": 0,
+          "y": 220
+        },
+        "params": {
+          "role": "imported_example_intent",
+          "path": "examples/peripherals/spi_master/lcd"
+        }
+      },
+      {
+        "id": "block_0_freertos",
+        "type": "lab_function_block",
+        "label": "Application Task",
+        "position": {
+          "x": 330,
+          "y": 220
+        },
+        "params": {
+          "api_group": "freertos",
+          "components": [
+            "esp_driver_gpio",
+            "esp_driver_jpeg",
+            "esp_driver_spi",
+            "freertos"
+          ]
+        }
+      },
+      {
+        "id": "block_1_gpio",
+        "type": "lab_function_block",
+        "label": "GPIO Control",
+        "position": {
+          "x": 560,
+          "y": 380
+        },
+        "params": {
+          "api_group": "gpio",
+          "components": [
+            "esp_driver_gpio",
+            "esp_driver_jpeg",
+            "esp_driver_spi",
+            "freertos"
+          ]
+        }
+      },
+      {
+        "id": "block_2_jpeg",
+        "type": "lab_function_block",
+        "label": "JPEG/Image Decoder",
+        "position": {
+          "x": 790,
+          "y": 220
+        },
+        "params": {
+          "api_group": "jpeg",
+          "components": [
+            "esp_driver_gpio",
+            "esp_driver_jpeg",
+            "esp_driver_spi",
+            "freertos"
+          ]
+        }
+      },
+      {
+        "id": "block_3_spimaster",
+        "type": "lab_function_block",
+        "label": "SPI Master Bus",
+        "position": {
+          "x": 1020,
+          "y": 380
+        },
+        "params": {
+          "api_group": "spi_master",
+          "components": [
+            "esp_driver_gpio",
+            "esp_driver_jpeg",
+            "esp_driver_spi",
+            "freertos"
+          ]
+        }
+      },
+      {
+        "id": "mcu_0_freertos",
+        "type": "esp32p4_resource",
+        "label": "FreeRTOS",
+        "position": {
+          "x": 330,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_1_gdma",
+        "type": "esp32p4_resource",
+        "label": "GDMA",
+        "position": {
+          "x": 540,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_2_gpio_matrix_io_mux",
+        "type": "esp32p4_resource",
+        "label": "GPIO Matrix / IO MUX",
+        "position": {
+          "x": 750,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_3_internal_dma_ram",
+        "type": "esp32p4_resource",
+        "label": "Internal DMA RAM",
+        "position": {
+          "x": 960,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_4_jpeg",
+        "type": "esp32p4_resource",
+        "label": "JPEG",
+        "position": {
+          "x": 1170,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_5_psram",
+        "type": "esp32p4_resource",
+        "label": "PSRAM",
+        "position": {
+          "x": 1380,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_6_spi",
+        "type": "esp32p4_resource",
+        "label": "SPI",
+        "position": {
+          "x": 1590,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "external_0_external_lcd_panel",
+        "type": "external_device",
+        "label": "External LCD Panel",
+        "position": {
+          "x": 330,
+          "y": 40
+        },
+        "params": {
+          "role": "external_hardware"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "system_intent_block_0_freertos",
+        "from": "system_intent.out",
+        "to": "block_0_freertos.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_1_gpio",
+        "from": "system_intent.out",
+        "to": "block_1_gpio.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_2_jpeg",
+        "from": "system_intent.out",
+        "to": "block_2_jpeg.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_3_spimaster",
+        "from": "system_intent.out",
+        "to": "block_3_spimaster.in",
+        "label": "uses"
+      },
+      {
+        "id": "jpeg_spi_pixels",
+        "from": "block_2_jpeg.out",
+        "to": "block_3_spimaster.in",
+        "label": "pixels"
+      },
+      {
+        "id": "gpio_spi_control",
+        "from": "block_1_gpio.out",
+        "to": "block_3_spimaster.in",
+        "label": "control_pins"
+      },
+      {
+        "id": "block_0_freertos_mcu_0_freertos",
+        "from": "block_0_freertos.out",
+        "to": "mcu_0_freertos.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_2_jpeg_mcu_1_gdma",
+        "from": "block_2_jpeg.out",
+        "to": "mcu_1_gdma.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_1_gpio_mcu_2_gpio_matrix_io_mux",
+        "from": "block_1_gpio.out",
+        "to": "mcu_2_gpio_matrix_io_mux.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_2_jpeg_mcu_3_internal_dma_ram",
+        "from": "block_2_jpeg.out",
+        "to": "mcu_3_internal_dma_ram.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_2_jpeg_mcu_4_jpeg",
+        "from": "block_2_jpeg.out",
+        "to": "mcu_4_jpeg.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_2_jpeg_mcu_5_psram",
+        "from": "block_2_jpeg.out",
+        "to": "mcu_5_psram.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_3_spimaster_mcu_6_spi",
+        "from": "block_3_spimaster.out",
+        "to": "mcu_6_spi.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_3_spimaster_external_0_external_lcd_panel",
+        "from": "block_3_spimaster.out",
+        "to": "external_0_external_lcd_panel.in",
+        "label": "drives"
+      }
+    ]
+  },
+  "production": {
+    "build_script": null,
+    "flash_script": null,
+    "default_env": {},
+    "known_good_command": null
+  },
+  "sdk_example": {
+    "inventory": "sdk_inventory/esp-idf-v5.5-esp32p4.json",
+    "id": "peripherals/spi_master/lcd",
+    "path": "examples/peripherals/spi_master/lcd",
+    "read_only": true,
+    "categories": [
+      "display_camera_video",
+      "destination_display"
+    ],
+    "api_groups": [
+      "freertos",
+      "gpio",
+      "jpeg",
+      "spi_master"
+    ],
+    "components": [
+      "esp_driver_gpio",
+      "esp_driver_jpeg",
+      "esp_driver_spi",
+      "freertos"
+    ],
+    "mcu_blocks": [
+      "FreeRTOS",
+      "GDMA",
+      "GPIO Matrix / IO MUX",
+      "Internal DMA RAM",
+      "JPEG",
+      "PSRAM",
+      "SPI"
+    ],
+    "source_files": [
+      "examples/peripherals/spi_master/lcd/main/decode_image.c",
+      "examples/peripherals/spi_master/lcd/main/decode_image.h",
+      "examples/peripherals/spi_master/lcd/main/pretty_effect.c",
+      "examples/peripherals/spi_master/lcd/main/pretty_effect.h",
+      "examples/peripherals/spi_master/lcd/main/spi_master_example_main.c"
+    ],
+    "sdkconfig_defaults": [],
+    "cmake_files": [
+      "examples/peripherals/spi_master/lcd/CMakeLists.txt",
+      "examples/peripherals/spi_master/lcd/main/CMakeLists.txt"
+    ]
+  },
+  "evidence": [
+    "docs/esp_idf_inventory_import_plan.md",
+    "docs/sdk_inventory_artifacts.md"
+  ],
+  "known_limits": [
+    "Imported project is read-only with respect to ESP-IDF source files.",
+    "Graph is inferred from inventory metadata and may not capture full C semantics.",
+    "Build/flash integration for imported SDK examples is not implemented yet."
+  ]
+}

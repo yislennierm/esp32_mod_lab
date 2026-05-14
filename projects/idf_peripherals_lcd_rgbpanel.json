@@ -1,0 +1,446 @@
+{
+  "schema_version": "0.1",
+  "id": "idf_peripherals_lcd_rgbpanel",
+  "name": "ESP-IDF: peripherals/lcd/rgb_panel",
+  "status": "imported_sdk_example_read_only",
+  "description": "Imported from the local ESP-IDF SDK inventory. Source files remain read-only references until graph-to-firmware generation is implemented.",
+  "source": {
+    "block": "esp_idf_example",
+    "profile": null
+  },
+  "processing": [
+    {
+      "block": "esp_lcd",
+      "profile": null
+    },
+    {
+      "block": "freertos",
+      "profile": null
+    },
+    {
+      "block": "gpio",
+      "profile": null
+    },
+    {
+      "block": "psram",
+      "profile": null
+    }
+  ],
+  "destination": {
+    "block": "unassigned_destination",
+    "profile": null
+  },
+  "mcu_blocks": [
+    "FreeRTOS",
+    "GDMA",
+    "GPIO Matrix / IO MUX",
+    "Heap",
+    "I80",
+    "LCD",
+    "MIPI DSI",
+    "PSRAM",
+    "RGB LCD",
+    "SPI"
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "system_intent",
+        "type": "system_intent",
+        "label": "peripherals/lcd/rgb_panel",
+        "position": {
+          "x": 0,
+          "y": 220
+        },
+        "params": {
+          "role": "imported_example_intent",
+          "path": "examples/peripherals/lcd/rgb_panel"
+        }
+      },
+      {
+        "id": "block_0_esplcd",
+        "type": "lab_function_block",
+        "label": "LCD Panel Driver",
+        "position": {
+          "x": 330,
+          "y": 220
+        },
+        "params": {
+          "api_group": "esp_lcd",
+          "components": [
+            "esp_driver_gpio",
+            "esp_lcd",
+            "esp_psram",
+            "freertos",
+            "heap"
+          ]
+        }
+      },
+      {
+        "id": "block_1_freertos",
+        "type": "lab_function_block",
+        "label": "Application Task",
+        "position": {
+          "x": 560,
+          "y": 380
+        },
+        "params": {
+          "api_group": "freertos",
+          "components": [
+            "esp_driver_gpio",
+            "esp_lcd",
+            "esp_psram",
+            "freertos",
+            "heap"
+          ],
+          "overlay": {
+            "editable": true,
+            "block_kind": "rtos_task",
+            "task_name": "app_main",
+            "priority": 5,
+            "stack_size_bytes": 4096,
+            "core_affinity": "any",
+            "enabled": true,
+            "notes": "Imported SDK example task overlay. Source remains read-only until explicit graph generation exists.",
+            "source_write_policy": "overlay_only"
+          }
+        }
+      },
+      {
+        "id": "block_2_gpio",
+        "type": "lab_function_block",
+        "label": "GPIO Control",
+        "position": {
+          "x": 790,
+          "y": 220
+        },
+        "params": {
+          "api_group": "gpio",
+          "components": [
+            "esp_driver_gpio",
+            "esp_lcd",
+            "esp_psram",
+            "freertos",
+            "heap"
+          ]
+        }
+      },
+      {
+        "id": "block_3_psram",
+        "type": "lab_function_block",
+        "label": "External Frame/Work Buffer",
+        "position": {
+          "x": 1020,
+          "y": 380
+        },
+        "params": {
+          "api_group": "psram",
+          "components": [
+            "esp_driver_gpio",
+            "esp_lcd",
+            "esp_psram",
+            "freertos",
+            "heap"
+          ]
+        }
+      },
+      {
+        "id": "mcu_0_freertos",
+        "type": "esp32p4_resource",
+        "label": "FreeRTOS",
+        "position": {
+          "x": 330,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_1_gdma",
+        "type": "esp32p4_resource",
+        "label": "GDMA",
+        "position": {
+          "x": 540,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_2_gpio_matrix_io_mux",
+        "type": "esp32p4_resource",
+        "label": "GPIO Matrix / IO MUX",
+        "position": {
+          "x": 750,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_3_heap",
+        "type": "esp32p4_resource",
+        "label": "Heap",
+        "position": {
+          "x": 960,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_4_i80",
+        "type": "esp32p4_resource",
+        "label": "I80",
+        "position": {
+          "x": 1170,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_5_lcd",
+        "type": "esp32p4_resource",
+        "label": "LCD",
+        "position": {
+          "x": 1380,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_6_mipi_dsi",
+        "type": "esp32p4_resource",
+        "label": "MIPI DSI",
+        "position": {
+          "x": 1590,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_7_psram",
+        "type": "esp32p4_resource",
+        "label": "PSRAM",
+        "position": {
+          "x": 330,
+          "y": 740
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_8_rgb_lcd",
+        "type": "esp32p4_resource",
+        "label": "RGB LCD",
+        "position": {
+          "x": 540,
+          "y": 740
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_9_spi",
+        "type": "esp32p4_resource",
+        "label": "SPI",
+        "position": {
+          "x": 750,
+          "y": 740
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "external_0_external_lcd_panel",
+        "type": "external_device",
+        "label": "External LCD Panel",
+        "position": {
+          "x": 330,
+          "y": 40
+        },
+        "params": {
+          "role": "external_hardware"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "system_intent_block_0_esplcd",
+        "from": "system_intent.out",
+        "to": "block_0_esplcd.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_1_freertos",
+        "from": "system_intent.out",
+        "to": "block_1_freertos.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_2_gpio",
+        "from": "system_intent.out",
+        "to": "block_2_gpio.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_3_psram",
+        "from": "system_intent.out",
+        "to": "block_3_psram.in",
+        "label": "uses"
+      },
+      {
+        "id": "block_1_freertos_mcu_0_freertos",
+        "from": "block_1_freertos.out",
+        "to": "mcu_0_freertos.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_0_esplcd_mcu_1_gdma",
+        "from": "block_0_esplcd.out",
+        "to": "mcu_1_gdma.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_2_gpio_mcu_2_gpio_matrix_io_mux",
+        "from": "block_2_gpio.out",
+        "to": "mcu_2_gpio_matrix_io_mux.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_3_psram_mcu_3_heap",
+        "from": "block_3_psram.out",
+        "to": "mcu_3_heap.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_0_esplcd_mcu_4_i80",
+        "from": "block_0_esplcd.out",
+        "to": "mcu_4_i80.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_0_esplcd_mcu_5_lcd",
+        "from": "block_0_esplcd.out",
+        "to": "mcu_5_lcd.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_0_esplcd_mcu_6_mipi_dsi",
+        "from": "block_0_esplcd.out",
+        "to": "mcu_6_mipi_dsi.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_3_psram_mcu_7_psram",
+        "from": "block_3_psram.out",
+        "to": "mcu_7_psram.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_0_esplcd_mcu_8_rgb_lcd",
+        "from": "block_0_esplcd.out",
+        "to": "mcu_8_rgb_lcd.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_0_esplcd_mcu_9_spi",
+        "from": "block_0_esplcd.out",
+        "to": "mcu_9_spi.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_0_esplcd_external_0_external_lcd_panel",
+        "from": "block_0_esplcd.out",
+        "to": "external_0_external_lcd_panel.in",
+        "label": "drives"
+      }
+    ]
+  },
+  "production": {
+    "build_script": null,
+    "flash_script": null,
+    "default_env": {},
+    "known_good_command": null
+  },
+  "sdk_example": {
+    "inventory": "sdk_inventory/esp-idf-v5.5-esp32p4.json",
+    "id": "peripherals/lcd/rgb_panel",
+    "path": "examples/peripherals/lcd/rgb_panel",
+    "read_only": true,
+    "categories": [
+      "display_camera_video",
+      "destination_display"
+    ],
+    "api_groups": [
+      "esp_lcd",
+      "freertos",
+      "gpio",
+      "psram"
+    ],
+    "components": [
+      "esp_driver_gpio",
+      "esp_lcd",
+      "esp_psram",
+      "freertos",
+      "heap"
+    ],
+    "mcu_blocks": [
+      "FreeRTOS",
+      "GDMA",
+      "GPIO Matrix / IO MUX",
+      "Heap",
+      "I80",
+      "LCD",
+      "MIPI DSI",
+      "PSRAM",
+      "RGB LCD",
+      "SPI"
+    ],
+    "source_files": [
+      "examples/peripherals/lcd/rgb_panel/main/lvgl_demo_ui.c",
+      "examples/peripherals/lcd/rgb_panel/main/rgb_lcd_example_main.c"
+    ],
+    "sdkconfig_defaults": [
+      "examples/peripherals/lcd/rgb_panel/sdkconfig.defaults",
+      "examples/peripherals/lcd/rgb_panel/sdkconfig.defaults.esp32p4",
+      "examples/peripherals/lcd/rgb_panel/sdkconfig.defaults.esp32s3"
+    ],
+    "cmake_files": [
+      "examples/peripherals/lcd/rgb_panel/CMakeLists.txt",
+      "examples/peripherals/lcd/rgb_panel/main/CMakeLists.txt"
+    ]
+  },
+  "evidence": [
+    "docs/esp_idf_inventory_import_plan.md",
+    "docs/sdk_inventory_artifacts.md"
+  ],
+  "known_limits": [
+    "Imported project is read-only with respect to ESP-IDF source files.",
+    "Graph is inferred from inventory metadata and may not capture full C semantics.",
+    "Build/flash integration for imported SDK examples is not implemented yet."
+  ]
+}

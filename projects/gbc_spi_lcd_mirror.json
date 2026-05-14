@@ -1,0 +1,48 @@
+{
+  "schema_version": "0.1",
+  "id": "gbc_spi_lcd_mirror",
+  "name": "GBC LCD to SPI LCD Mirror",
+  "status": "validated_lab_to_early_production",
+  "description": "First real project assembled from the lab: capture the Game Boy Color LCD bus and mirror it to the SPI LCD destination.",
+  "source": {
+    "block": "gbc_lcd_source",
+    "profile": "profiles/gbc_lcd.json"
+  },
+  "processing": [],
+  "destination": {
+    "block": "spi_lcd_destination",
+    "profile": "profiles/spi_lcd_destination.json"
+  },
+  "mcu_blocks": [
+    "HP RISC-V x2",
+    "L2MEM / Cache",
+    "GPIO Matrix / IO MUX",
+    "GDMA",
+    "LCD_CAM",
+    "SPI",
+    "Internal DMA RAM",
+    "PSRAM",
+    "USB Serial/JTAG"
+  ],
+  "production": {
+    "build_script": "scripts/build_production_mirror.sh",
+    "flash_script": "scripts/flash_production_mirror.sh",
+    "default_env": {
+      "DEST_SPI_LCD_RAW_SPI": "1",
+      "DEST_SPI_LCD_PCLK_HZ": "70000000",
+      "PRODUCTION_MIRROR_MODE": "2"
+    },
+    "known_good_command": "DEST_SPI_LCD_RAW_SPI=1 DEST_SPI_LCD_PCLK_HZ=70000000 PRODUCTION_MIRROR_MODE=2 ./scripts/flash_production_mirror.sh ${ESP32P4_PORT}"
+  },
+  "evidence": [
+    "CODEX_HANDOFF.md",
+    "docs/experiment_log.md",
+    "docs/production_modes.md",
+    "captures/benchmarks/source_ring/20260511T184144Z-source-ring-bench/report.md"
+  ],
+  "known_limits": [
+    "Current SPI LCD output is below the original GBC frame rate.",
+    "Production mirror mode is a working baseline, not the final maximum-throughput architecture.",
+    "Build and flash actions use the local ESP-IDF install through scripts/idf_env.sh."
+  ]
+}

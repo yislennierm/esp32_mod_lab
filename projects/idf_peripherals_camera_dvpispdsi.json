@@ -1,0 +1,725 @@
+{
+  "schema_version": "0.1",
+  "id": "idf_peripherals_camera_dvpispdsi",
+  "name": "ESP-IDF: peripherals/camera/dvp_isp_dsi",
+  "status": "imported_sdk_example_read_only",
+  "description": "Imported from the local ESP-IDF SDK inventory. Source files remain read-only references until graph-to-firmware generation is implemented.",
+  "source": {
+    "block": "esp_idf_example",
+    "profile": null
+  },
+  "processing": [
+    {
+      "block": "camera",
+      "profile": null
+    },
+    {
+      "block": "esp_lcd",
+      "profile": null
+    },
+    {
+      "block": "freertos",
+      "profile": null
+    },
+    {
+      "block": "gpio",
+      "profile": null
+    },
+    {
+      "block": "i2c",
+      "profile": null
+    },
+    {
+      "block": "isp",
+      "profile": null
+    },
+    {
+      "block": "ledc",
+      "profile": null
+    },
+    {
+      "block": "psram",
+      "profile": null
+    }
+  ],
+  "destination": {
+    "block": "unassigned_destination",
+    "profile": null
+  },
+  "mcu_blocks": [
+    "CAM/LCD_CAM",
+    "FreeRTOS",
+    "GDMA",
+    "GPIO Matrix / IO MUX",
+    "Heap",
+    "I2C",
+    "I80",
+    "ISP",
+    "LCD",
+    "LEDC",
+    "MIPI DSI",
+    "PSRAM",
+    "RGB LCD",
+    "SPI"
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "system_intent",
+        "type": "system_intent",
+        "label": "peripherals/camera/dvp_isp_dsi",
+        "position": {
+          "x": 0,
+          "y": 220
+        },
+        "params": {
+          "role": "imported_example_intent",
+          "path": "examples/peripherals/camera/dvp_isp_dsi"
+        }
+      },
+      {
+        "id": "block_0_camera",
+        "type": "lab_function_block",
+        "label": "Camera Source",
+        "position": {
+          "x": 330,
+          "y": 220
+        },
+        "params": {
+          "api_group": "camera",
+          "components": [
+            "dsi_init",
+            "esp_driver_cam",
+            "esp_driver_gpio",
+            "esp_driver_i2c",
+            "esp_driver_isp",
+            "esp_driver_ledc",
+            "esp_lcd",
+            "esp_mm",
+            "esp_psram",
+            "freertos",
+            "heap",
+            "sensor_init"
+          ]
+        }
+      },
+      {
+        "id": "block_1_esplcd",
+        "type": "lab_function_block",
+        "label": "LCD Panel Driver",
+        "position": {
+          "x": 560,
+          "y": 380
+        },
+        "params": {
+          "api_group": "esp_lcd",
+          "components": [
+            "dsi_init",
+            "esp_driver_cam",
+            "esp_driver_gpio",
+            "esp_driver_i2c",
+            "esp_driver_isp",
+            "esp_driver_ledc",
+            "esp_lcd",
+            "esp_mm",
+            "esp_psram",
+            "freertos",
+            "heap",
+            "sensor_init"
+          ]
+        }
+      },
+      {
+        "id": "block_2_freertos",
+        "type": "lab_function_block",
+        "label": "Application Task",
+        "position": {
+          "x": 790,
+          "y": 220
+        },
+        "params": {
+          "api_group": "freertos",
+          "components": [
+            "dsi_init",
+            "esp_driver_cam",
+            "esp_driver_gpio",
+            "esp_driver_i2c",
+            "esp_driver_isp",
+            "esp_driver_ledc",
+            "esp_lcd",
+            "esp_mm",
+            "esp_psram",
+            "freertos",
+            "heap",
+            "sensor_init"
+          ]
+        }
+      },
+      {
+        "id": "block_3_gpio",
+        "type": "lab_function_block",
+        "label": "GPIO Control",
+        "position": {
+          "x": 1020,
+          "y": 380
+        },
+        "params": {
+          "api_group": "gpio",
+          "components": [
+            "dsi_init",
+            "esp_driver_cam",
+            "esp_driver_gpio",
+            "esp_driver_i2c",
+            "esp_driver_isp",
+            "esp_driver_ledc",
+            "esp_lcd",
+            "esp_mm",
+            "esp_psram",
+            "freertos",
+            "heap",
+            "sensor_init"
+          ]
+        }
+      },
+      {
+        "id": "block_4_i2c",
+        "type": "lab_function_block",
+        "label": "I2C Control Bus",
+        "position": {
+          "x": 1250,
+          "y": 220
+        },
+        "params": {
+          "api_group": "i2c",
+          "components": [
+            "dsi_init",
+            "esp_driver_cam",
+            "esp_driver_gpio",
+            "esp_driver_i2c",
+            "esp_driver_isp",
+            "esp_driver_ledc",
+            "esp_lcd",
+            "esp_mm",
+            "esp_psram",
+            "freertos",
+            "heap",
+            "sensor_init"
+          ]
+        }
+      },
+      {
+        "id": "block_5_isp",
+        "type": "lab_function_block",
+        "label": "Image Signal Processor",
+        "position": {
+          "x": 1480,
+          "y": 380
+        },
+        "params": {
+          "api_group": "isp",
+          "components": [
+            "dsi_init",
+            "esp_driver_cam",
+            "esp_driver_gpio",
+            "esp_driver_i2c",
+            "esp_driver_isp",
+            "esp_driver_ledc",
+            "esp_lcd",
+            "esp_mm",
+            "esp_psram",
+            "freertos",
+            "heap",
+            "sensor_init"
+          ]
+        }
+      },
+      {
+        "id": "block_6_ledc",
+        "type": "lab_function_block",
+        "label": "PWM/LEDC Output",
+        "position": {
+          "x": 1710,
+          "y": 220
+        },
+        "params": {
+          "api_group": "ledc",
+          "components": [
+            "dsi_init",
+            "esp_driver_cam",
+            "esp_driver_gpio",
+            "esp_driver_i2c",
+            "esp_driver_isp",
+            "esp_driver_ledc",
+            "esp_lcd",
+            "esp_mm",
+            "esp_psram",
+            "freertos",
+            "heap",
+            "sensor_init"
+          ]
+        }
+      },
+      {
+        "id": "block_7_psram",
+        "type": "lab_function_block",
+        "label": "External Frame/Work Buffer",
+        "position": {
+          "x": 1940,
+          "y": 380
+        },
+        "params": {
+          "api_group": "psram",
+          "components": [
+            "dsi_init",
+            "esp_driver_cam",
+            "esp_driver_gpio",
+            "esp_driver_i2c",
+            "esp_driver_isp",
+            "esp_driver_ledc",
+            "esp_lcd",
+            "esp_mm",
+            "esp_psram",
+            "freertos",
+            "heap",
+            "sensor_init"
+          ]
+        }
+      },
+      {
+        "id": "mcu_0_cam_lcdcam",
+        "type": "esp32p4_resource",
+        "label": "CAM/LCD_CAM",
+        "position": {
+          "x": 330,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_1_freertos",
+        "type": "esp32p4_resource",
+        "label": "FreeRTOS",
+        "position": {
+          "x": 540,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_2_gdma",
+        "type": "esp32p4_resource",
+        "label": "GDMA",
+        "position": {
+          "x": 750,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_3_gpio_matrix_io_mux",
+        "type": "esp32p4_resource",
+        "label": "GPIO Matrix / IO MUX",
+        "position": {
+          "x": 960,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_4_heap",
+        "type": "esp32p4_resource",
+        "label": "Heap",
+        "position": {
+          "x": 1170,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_5_i2c",
+        "type": "esp32p4_resource",
+        "label": "I2C",
+        "position": {
+          "x": 1380,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_6_i80",
+        "type": "esp32p4_resource",
+        "label": "I80",
+        "position": {
+          "x": 1590,
+          "y": 620
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_7_isp",
+        "type": "esp32p4_resource",
+        "label": "ISP",
+        "position": {
+          "x": 330,
+          "y": 740
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_8_lcd",
+        "type": "esp32p4_resource",
+        "label": "LCD",
+        "position": {
+          "x": 540,
+          "y": 740
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_9_ledc",
+        "type": "esp32p4_resource",
+        "label": "LEDC",
+        "position": {
+          "x": 750,
+          "y": 740
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_10_mipi_dsi",
+        "type": "esp32p4_resource",
+        "label": "MIPI DSI",
+        "position": {
+          "x": 960,
+          "y": 740
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_11_psram",
+        "type": "esp32p4_resource",
+        "label": "PSRAM",
+        "position": {
+          "x": 1170,
+          "y": 740
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_12_rgb_lcd",
+        "type": "esp32p4_resource",
+        "label": "RGB LCD",
+        "position": {
+          "x": 1380,
+          "y": 740
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "mcu_13_spi",
+        "type": "esp32p4_resource",
+        "label": "SPI",
+        "position": {
+          "x": 1590,
+          "y": 740
+        },
+        "params": {
+          "resource_claim": "inferred",
+          "confidence": "metadata"
+        }
+      },
+      {
+        "id": "external_0_external_camera_sensor",
+        "type": "external_device",
+        "label": "External Camera/Sensor",
+        "position": {
+          "x": 330,
+          "y": 40
+        },
+        "params": {
+          "role": "external_hardware"
+        }
+      },
+      {
+        "id": "external_1_i2c_peripheral",
+        "type": "external_device",
+        "label": "I2C Peripheral",
+        "position": {
+          "x": 590,
+          "y": 40
+        },
+        "params": {
+          "role": "external_hardware"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "system_intent_block_0_camera",
+        "from": "system_intent.out",
+        "to": "block_0_camera.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_1_esplcd",
+        "from": "system_intent.out",
+        "to": "block_1_esplcd.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_2_freertos",
+        "from": "system_intent.out",
+        "to": "block_2_freertos.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_3_gpio",
+        "from": "system_intent.out",
+        "to": "block_3_gpio.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_4_i2c",
+        "from": "system_intent.out",
+        "to": "block_4_i2c.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_5_isp",
+        "from": "system_intent.out",
+        "to": "block_5_isp.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_6_ledc",
+        "from": "system_intent.out",
+        "to": "block_6_ledc.in",
+        "label": "uses"
+      },
+      {
+        "id": "system_intent_block_7_psram",
+        "from": "system_intent.out",
+        "to": "block_7_psram.in",
+        "label": "uses"
+      },
+      {
+        "id": "camera_isp_pixels",
+        "from": "block_0_camera.out",
+        "to": "block_5_isp.in",
+        "label": "pixels"
+      },
+      {
+        "id": "block_0_camera_mcu_0_cam_lcdcam",
+        "from": "block_0_camera.out",
+        "to": "mcu_0_cam_lcdcam.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_2_freertos_mcu_1_freertos",
+        "from": "block_2_freertos.out",
+        "to": "mcu_1_freertos.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_0_camera_mcu_2_gdma",
+        "from": "block_0_camera.out",
+        "to": "mcu_2_gdma.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_3_gpio_mcu_3_gpio_matrix_io_mux",
+        "from": "block_3_gpio.out",
+        "to": "mcu_3_gpio_matrix_io_mux.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_7_psram_mcu_4_heap",
+        "from": "block_7_psram.out",
+        "to": "mcu_4_heap.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_4_i2c_mcu_5_i2c",
+        "from": "block_4_i2c.out",
+        "to": "mcu_5_i2c.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_1_esplcd_mcu_6_i80",
+        "from": "block_1_esplcd.out",
+        "to": "mcu_6_i80.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_5_isp_mcu_7_isp",
+        "from": "block_5_isp.out",
+        "to": "mcu_7_isp.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_1_esplcd_mcu_8_lcd",
+        "from": "block_1_esplcd.out",
+        "to": "mcu_8_lcd.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_6_ledc_mcu_9_ledc",
+        "from": "block_6_ledc.out",
+        "to": "mcu_9_ledc.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_1_esplcd_mcu_10_mipi_dsi",
+        "from": "block_1_esplcd.out",
+        "to": "mcu_10_mipi_dsi.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_0_camera_mcu_11_psram",
+        "from": "block_0_camera.out",
+        "to": "mcu_11_psram.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_1_esplcd_mcu_12_rgb_lcd",
+        "from": "block_1_esplcd.out",
+        "to": "mcu_12_rgb_lcd.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_1_esplcd_mcu_13_spi",
+        "from": "block_1_esplcd.out",
+        "to": "mcu_13_spi.in",
+        "label": "claims"
+      },
+      {
+        "id": "block_1_esplcd_external_0_external_camera_sensor",
+        "from": "block_1_esplcd.out",
+        "to": "external_0_external_camera_sensor.in",
+        "label": "connects"
+      },
+      {
+        "id": "block_1_esplcd_external_1_i2c_peripheral",
+        "from": "block_1_esplcd.out",
+        "to": "external_1_i2c_peripheral.in",
+        "label": "connects"
+      }
+    ]
+  },
+  "production": {
+    "build_script": null,
+    "flash_script": null,
+    "default_env": {},
+    "known_good_command": null
+  },
+  "sdk_example": {
+    "inventory": "sdk_inventory/esp-idf-v5.5-esp32p4.json",
+    "id": "peripherals/camera/dvp_isp_dsi",
+    "path": "examples/peripherals/camera/dvp_isp_dsi",
+    "read_only": true,
+    "categories": [
+      "display_camera_video",
+      "source_capture"
+    ],
+    "api_groups": [
+      "camera",
+      "esp_lcd",
+      "freertos",
+      "gpio",
+      "i2c",
+      "isp",
+      "ledc",
+      "psram"
+    ],
+    "components": [
+      "dsi_init",
+      "esp_driver_cam",
+      "esp_driver_gpio",
+      "esp_driver_i2c",
+      "esp_driver_isp",
+      "esp_driver_ledc",
+      "esp_lcd",
+      "esp_mm",
+      "esp_psram",
+      "freertos",
+      "heap",
+      "sensor_init"
+    ],
+    "mcu_blocks": [
+      "CAM/LCD_CAM",
+      "FreeRTOS",
+      "GDMA",
+      "GPIO Matrix / IO MUX",
+      "Heap",
+      "I2C",
+      "I80",
+      "ISP",
+      "LCD",
+      "LEDC",
+      "MIPI DSI",
+      "PSRAM",
+      "RGB LCD",
+      "SPI"
+    ],
+    "source_files": [
+      "examples/peripherals/camera/dvp_isp_dsi/main/dvp_isp_dsi_main.c",
+      "examples/peripherals/camera/dvp_isp_dsi/main/example_config.h"
+    ],
+    "sdkconfig_defaults": [
+      "examples/peripherals/camera/dvp_isp_dsi/sdkconfig.defaults",
+      "examples/peripherals/camera/dvp_isp_dsi/sdkconfig.defaults.esp32p4"
+    ],
+    "cmake_files": [
+      "examples/peripherals/camera/dvp_isp_dsi/CMakeLists.txt",
+      "examples/peripherals/camera/dvp_isp_dsi/main/CMakeLists.txt"
+    ]
+  },
+  "evidence": [
+    "docs/esp_idf_inventory_import_plan.md",
+    "docs/sdk_inventory_artifacts.md"
+  ],
+  "known_limits": [
+    "Imported project is read-only with respect to ESP-IDF source files.",
+    "Graph is inferred from inventory metadata and may not capture full C semantics.",
+    "Build/flash integration for imported SDK examples is not implemented yet."
+  ]
+}

@@ -22,6 +22,17 @@ Current hypothesis: keep the Python server and API endpoints, but move the brows
 
 Confidence level: high for Ant Design as a UI system; medium for exact frontend build structure until we decide whether to use Vite, Umi, or another tool.
 
+Generic lab panels must not hardcode the current GBC proof target or its active pixel format.
+
+UI wording policy:
+
+- Dashboard, Graph, Live, Source, Processing, and Destination panels should use neutral labels such as source, destination, frame stream, profile, frame format, and project runtime.
+- The top-level navigation should be project/workspace oriented, not the older source-processing-destination phase list. Current labels should read as Projects, Graph, SDK, Signals, Runtime, I/O, Monitor, Artifacts, Profiles, and Logs.
+- Global telemetry such as FPS belongs in the Monitor page, not in the persistent header, because not every selected project is a live frame-capture project.
+- Target-specific names belong in selected project/profile data, evidence docs, or explicit target modules.
+- Pixel formats such as RGB565/RGB666 may appear in technical metadata, debug JSON, decoder code, and target profiles, but should not be repeated as generic panel titles or primary status badges.
+- Compatibility API endpoints and firmware commands may keep historical names until a migration layer exists.
+
 ## 3. Unknowns
 
 - Whether the frontend should be served by the Python workbench server or run as a separate dev server during development.

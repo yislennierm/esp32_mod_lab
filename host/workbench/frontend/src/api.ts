@@ -1,5 +1,8 @@
 export type WorkbenchStatus = {
   ok: boolean;
+  device_connected?: boolean;
+  device_error?: string;
+  serial_port?: string;
   running: boolean;
   source_state: string;
   source_wait_ms: number;
@@ -99,6 +102,67 @@ export type PinRow = {
   gpio: number;
 };
 
+export type LabBlock = {
+  id: string;
+  name: string;
+  kind: 'source' | 'processing' | 'destination' | 'transport';
+  status: string;
+  profile?: string;
+  firmware_module?: string;
+  evidence?: string[];
+};
+
+export type LabProject = {
+  id: string;
+  name: string;
+  status: string;
+  description?: string;
+  source?: { block: string; profile?: string };
+  processing?: Array<{ block: string; profile?: string }>;
+  destination?: { block: string; profile?: string };
+  mcu_blocks?: string[];
+  production?: {
+    build_script?: string | null;
+    flash_script?: string | null;
+    default_env?: Record<string, string>;
+    known_good_command?: string | null;
+  };
+  graph?: {
+    nodes?: Array<Record<string, unknown>>;
+    edges?: Array<Record<string, unknown>>;
+  };
+  sdk_example?: Record<string, unknown>;
+};
+
+export type ProjectValidation = {
+  ok: boolean;
+  project_id: string;
+  errors: string[];
+  warnings: string[];
+  source_gpios: Array<{ signal: string; gpio: number }>;
+  destination_gpios: Array<{ signal: string; gpio: number }>;
+};
+
+export type ProjectActionResult = {
+  ok: boolean;
+  project_id: string;
+  action: string;
+  command?: string[];
+  returncode?: number;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+};
+
+export type ProjectMutationResult = {
+  ok: boolean;
+  project?: LabProject;
+  projects: LabProject[];
+  id?: string;
+  path?: string;
+  error?: string;
+};
+
 export type FrameResponse = {
   bytes: Uint8Array;
   metadata: Record<string, unknown>;
@@ -113,6 +177,56 @@ export type DestinationGpioResponse = {
   error?: string;
   owner?: string;
   claims?: Array<{ signal: string; gpio: number; level: number }>;
+};
+
+export type SdkInventorySummary = {
+  ok: boolean;
+  schema: string;
+  generated_at: string;
+  source: {
+    idf_path?: string;
+    target?: string;
+    version?: Record<string, string | null>;
+  };
+  summary: {
+    component_count?: number;
+    example_count?: number;
+    examples_by_category?: Record<string, number>;
+    examples_by_relevance?: Record<string, number>;
+    example_api_group_hits?: Record<string, number>;
+    example_mcu_block_hits?: Record<string, number>;
+    top_import_candidates?: Array<Record<string, unknown>>;
+  };
+  classification?: Record<string, unknown>;
+};
+
+export type SdkExample = {
+  id: string;
+  name: string;
+  path: string;
+  category_path: string;
+  relevance: string;
+  categories: string[];
+  api_groups: string[];
+  components: string[];
+  mcu_blocks: string[];
+  source_file_count: number;
+  sdkconfig_defaults: string[];
+  import_status: string;
+};
+
+export type EspressifRepo = {
+  name: string;
+  full_name: string;
+  html_url: string;
+  description: string;
+  language: string;
+  topics: string[];
+  stars: number;
+  forks: number;
+  archived: boolean;
+  categories: string[];
+  relevance: string;
 };
 
 async function getJson<T>(path: string): Promise<T> {
@@ -138,8 +252,29 @@ async function postJson<T>(path: string, payload: unknown): Promise<T> {
   return data as T;
 }
 
+function queryString(params: Record<string, string | number | undefined>) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      query.set(key, String(value));
+    }
+  }
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : '';
+}
+
 export const api = {
   status: () => getJson<WorkbenchStatus>('/api/status'),
+  blocks: () => getJson<{ ok: boolean; blocks: LabBlock[] }>('/api/blocks'),
+  projects: () => getJson<{ ok: boolean; projects: LabProject[] }>('/api/projects'),
+  createProject: (payload: LabProject) => postJson<ProjectMutationResult>('/api/projects/create', payload),
+  saveProject: (payload: LabProject) => postJson<ProjectMutationResult>('/api/projects/save', payload),
+  duplicateProject: (sourceId: string, id: string, name: string) => postJson<ProjectMutationResult>('/api/projects/duplicate', { source_id: sourceId, id, name }),
+  deleteProject: (id: string, confirm?: string) => postJson<ProjectMutationResult>('/api/projects/delete', { id, confirm }),
+  importIdfExample: (id: string) => postJson<ProjectMutationResult>('/api/projects/import-idf-example', { id }),
+  validateProject: (projectId: string) => getJson<ProjectValidation>(`/api/projects/validate?id=${encodeURIComponent(projectId)}`),
+  buildProject: (projectId: string) => postJson<ProjectActionResult>('/api/projects/build', { id: projectId }),
+  flashProject: (projectId: string) => postJson<ProjectActionResult>('/api/projects/flash', { id: projectId }),
   profile: () => getJson<TargetProfile>('/api/profile'),
   destinationProfile: () => getJson<DestinationProfile>('/api/destination-profile'),
   saveDestinationProfile: (payload: unknown) => postJson<{ ok: boolean; profile: DestinationProfile; path: string }>('/api/destination-profile', payload),
@@ -151,12 +286,16 @@ export const api = {
   destinationGpioSet: (signal: string, level: number) => getJson<DestinationGpioResponse>(`/api/destination/gpio/set?signal=${encodeURIComponent(signal)}&level=${level}`),
   destinationGpioPulse: (signal: string, level: number, durationMs: number) => getJson<DestinationGpioResponse>(`/api/destination/gpio/pulse?signal=${encodeURIComponent(signal)}&level=${level}&duration_ms=${durationMs}`),
   destinationGpioRelease: (signal: string) => getJson<DestinationGpioResponse>(`/api/destination/gpio/release?signal=${encodeURIComponent(signal)}`),
+  sdkIdf: () => getJson<SdkInventorySummary>('/api/sdk/idf'),
+  sdkExamples: (params: Record<string, string | number | undefined> = {}) => getJson<{ ok: boolean; count: number; examples: SdkExample[] }>(`/api/sdk/examples${queryString(params)}`),
+  sdkExample: (id: string) => getJson<{ ok: boolean; example: SdkExample & Record<string, unknown> }>(`/api/sdk/examples?id=${encodeURIComponent(id)}`),
+  espressifRepos: (params: Record<string, string | number | undefined> = {}) => getJson<{ ok: boolean; generated_at: string; summary: Record<string, unknown>; count: number; repositories: EspressifRepo[] }>(`/api/research/espressif/repos${queryString(params)}`),
   destinationSpiStatus: () => getJson<Record<string, unknown>>('/api/destination/spi/status'),
   destinationSpiInit: () => getJson<Record<string, unknown>>('/api/destination/spi/init'),
   destinationSpiSafeOff: () => getJson<Record<string, unknown>>('/api/destination/spi/safe-off'),
   destinationSpiTestPattern: (pattern = 'orientation') => getJson<Record<string, unknown>>(`/api/destination/spi/test-pattern?pattern=${encodeURIComponent(pattern)}`),
   destinationSpiTestPattern565: () => getJson<Record<string, unknown>>('/api/destination/spi/test-pattern565'),
-  destinationSpiShowGbcFrame: () => getJson<Record<string, unknown>>('/api/destination/spi/show-gbc-frame?timeout_ms=300'),
+  destinationSpiShowSourceFrame: () => getJson<Record<string, unknown>>('/api/destination/spi/show-gbc-frame?timeout_ms=300'),
   destinationSpiSignalBurst: (durationMs = 5000) => getJson<Record<string, unknown>>(`/api/destination/spi/signal-burst?duration_ms=${durationMs}`),
   destinationSpiClear: (color = '0000') => getJson<Record<string, unknown>>(`/api/destination/spi/clear?color=${encodeURIComponent(color)}`),
   readGpios: () => getJson<{ ok: boolean; results: Array<Record<string, unknown>> }>('/api/workbench/read-gpios'),

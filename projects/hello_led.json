@@ -1,0 +1,109 @@
+{
+  "schema_version": "0.1",
+  "id": "hello_led",
+  "name": "Hello LED Lab",
+  "status": "draft_lab_sandbox",
+  "description": "Safe beginner project for developing the lab UI, block graph, GPIO validation, and deploy workflow without touching any hardware capture pipeline.",
+  "source": {
+    "block": "constant_pattern_source",
+    "profile": null
+  },
+  "processing": [
+    {
+      "block": "timer_tick",
+      "profile": null
+    }
+  ],
+  "destination": {
+    "block": "gpio_led_destination",
+    "profile": null
+  },
+  "mcu_blocks": [
+    "HP RISC-V x2",
+    "GPIO Matrix / IO MUX",
+    "Timers"
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "tick",
+        "type": "timer_tick",
+        "label": "Timer Tick",
+        "position": {
+          "x": 0,
+          "y": 180
+        },
+        "ports": {
+          "out": [
+            "tick"
+          ]
+        },
+        "params": {
+          "period_ms": 500
+        }
+      },
+      {
+        "id": "toggle",
+        "type": "toggle_logic",
+        "label": "Toggle Logic",
+        "position": {
+          "x": 320,
+          "y": 180
+        },
+        "ports": {
+          "in": [
+            "tick"
+          ],
+          "out": [
+            "level"
+          ]
+        }
+      },
+      {
+        "id": "led",
+        "type": "gpio_led_destination",
+        "label": "GPIO LED",
+        "position": {
+          "x": 640,
+          "y": 180
+        },
+        "ports": {
+          "in": [
+            "level"
+          ]
+        },
+        "params": {
+          "gpio": null,
+          "active_level": 1
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "tick-toggle",
+        "from": "tick.tick",
+        "to": "toggle.tick",
+        "label": "message:tick"
+      },
+      {
+        "id": "toggle-led",
+        "from": "toggle.level",
+        "to": "led.level",
+        "label": "gpio_level"
+      }
+    ]
+  },
+  "production": {
+    "build_script": null,
+    "flash_script": null,
+    "default_env": {},
+    "known_good_command": null
+  },
+  "evidence": [
+    "docs/flowgraph_lab_plan.md"
+  ],
+  "known_limits": [
+    "No firmware implementation yet.",
+    "Intended as UI, graph, and project workflow sandbox before production deployment support."
+  ]
+}

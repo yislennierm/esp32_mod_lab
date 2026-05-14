@@ -33,6 +33,13 @@ For humans:
 | `docs/DECISIONS.md` | Decision log and architectural constraints. |
 | `docs/DOCS_INDEX.md` | Documentation map and read order. |
 | `docs/system_method.md` | Source-processing-destination method. |
+| `docs/project_block_model.md` | Lab block and deployable project model. |
+| `docs/flowgraph_lab_plan.md` | GNU Radio-inspired graph UI and ESP32-P4 block-dashboard plan. |
+| `docs/graph_workspace_tools_plan.md` | Graph toolbar, layer semantics, and WYSIWYG/GNU Radio workspace plan. |
+| `docs/graph_block_editors.md` | Editable graph block overlay contract and RTOS Task editor behavior. |
+| `docs/esp_idf_inventory_import_plan.md` | ESP-IDF SDK inventory, example import, and SDK-backed graph plan. |
+| `docs/espressif_github_inventory_plan.md` | Espressif GitHub organization inventory and external repository research plan. |
+| `docs/sdk_inventory_artifacts.md` | Generated SDK and repository inventory artifact reference. |
 | `docs/system_gap_assessment.md` | Current gaps and recommended roadmap. |
 | `docs/esp32p4_modder_research_plan.md` | Modder-style ESP32-P4 research plan, references, and benchmark phases. |
 | `docs/ant_design_ui_plan.md` | Ant Design UI direction and migration plan. |
@@ -55,6 +62,13 @@ For humans:
 | `docs/platform/reference_pcb_architecture.md` | Custom ESP32-P4 PCB architecture for lab and production bridge hardware. |
 | `docs/firmware_recovery_workflow.md` | Repeatable build, flash, recovery, and serial-port ownership workflow. |
 | `docs/production_modes.md` | Compile-time production firmware modes assembled from proven lab blocks. |
+| `docs/project_block_model.md` | Contract between lab workflows, reusable blocks, and deployable projects. |
+| `docs/flowgraph_lab_plan.md` | Flowgraph workbench direction, stream/message/tag model, and MCU dashboard notes. |
+| `docs/graph_workspace_tools_plan.md` | Planned graph workspace tools, modes, and layer semantics. |
+| `docs/graph_block_editors.md` | Graph block editor overlay model and current typed editor fields. |
+| `docs/esp_idf_inventory_import_plan.md` | Plan for scanning ESP-IDF, importing examples, and mapping SDK APIs to lab graph/resource blocks. |
+| `docs/espressif_github_inventory_plan.md` | Plan for tracking and researching all Espressif GitHub repositories. |
+| `docs/sdk_inventory_artifacts.md` | Reference for generated inventory JSON files and generator scripts. |
 | `docs/esp32p4_modder_research_plan.md` | Research path for source capture, PPA, USB, and serious display destinations. |
 | `docs/destination_spi_lcd_lab.md` | Draft destination research contract for SPI LCD/IPS modules. |
 | `docs/artifacts/manifest_format.md` | Future common capture manifest. |

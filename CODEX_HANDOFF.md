@@ -12,6 +12,18 @@ Source display bus -> ESP32-P4 capture/processing/instrumentation -> Destination
 
 The same ESP32-P4 should work as both an investigation instrument and, later, a production firmware target.
 
+## Lab / Project Split
+
+The browser workbench now exposes the first version of the lab-to-project boundary:
+
+- Blocks are reusable units such as `gbc_lcd_source`, `spi_lcd_destination`, and `production_mirror`.
+- Projects compose blocks into deployable firmware.
+- The first project profile is `projects/gbc_spi_lcd_mirror.json`.
+- The Project tab can list blocks/projects, validate source/destination GPIO conflicts, build the production project, and flash it through the existing scripts.
+- A first read-only Graph tab now renders the current project as a block flowgraph and includes an ESP32-P4 dashboard inspired by the official functional block diagram.
+
+Important behavior: flashing from the Project tab releases the workbench serial session first. After production firmware is flashed, the interactive lab backend may no longer be able to talk to the board until lab firmware is flashed again.
+
 ## Current Hardware Mapping
 
 ### GBC LCD Source
@@ -163,6 +175,8 @@ Start here for future sessions:
 - `docs/AI_CONTEXT.md`
 - `docs/DOCS_INDEX.md`
 - `docs/system_method.md`
+- `docs/project_block_model.md`
+- `docs/flowgraph_lab_plan.md`
 - `docs/architecture.md`
 - `docs/capture_pipeline.md`
 - `docs/destination_spi_lcd_lab.md`
@@ -170,3 +184,66 @@ Start here for future sessions:
 - `docs/platform/esp32p4_internal_dataflow_plan.md`
 - `docs/experiment_log.md`
 
+## Current Lab UI Direction
+
+The Graph page is moving toward a GNU Radio/WYSIWYG workspace.
+
+Recent state:
+
+- ESP-IDF examples import as read-only lab projects.
+- The graph shows functional blocks, MCU resources, and external electronics, not source files as nodes.
+- Nodes can be dragged and layout can be saved.
+- The first typed block editor is implemented for RTOS Task nodes.
+- RTOS Task edits are stored as `params.overlay` metadata in project JSON and do not modify imported ESP-IDF source.
+- Editable RTOS fields: enabled, task name, priority, stack size bytes, core affinity, and notes.
+- The graph inspector is organized around block authoring:
+  - Block: typed editor, connections, metadata, debug JSON.
+  - Context: project-level source/destination/status/device state.
+  - SDK: read-only imported ESP-IDF references.
+  - Library: available reusable lab blocks.
+  - Model: editing rules.
+
+Relevant docs:
+
+- `docs/graph_workspace_tools_plan.md`
+- `docs/graph_block_editors.md`
+
+## Portability / Next Computer Plan
+
+The repo is currently staying as one GitHub repository: `https://github.com/yislennierm/esp32_mod_lab`.
+
+Conceptual split to preserve while still in one repo:
+
+- Lab platform: browser workbench, ESP32-P4 block inventory, SDK importer, generic graph editor, setup scripts.
+- Projects: machine-readable project JSON under `projects/`.
+- Target profiles: source/input profiles under `profiles/`, currently `profiles/gbc_lcd.json`.
+- I/O profiles: output/hardware profiles under `profiles/`, currently `profiles/spi_lcd_destination.json`.
+- SDK/reference inventories: generated local metadata under `sdk_inventory/` and `inventories/`.
+
+Do not treat GBC as the lab itself. GBC is one project/profile pair and the first proof target. `hello_led` and imported ESP-IDF examples must be able to open without showing GBC as the active project.
+
+Machine-local items:
+
+- ESP-IDF path is not portable. Use `.env` locally and do not commit it.
+- macOS current IDF path was `/Users/nene/esp/v5.5/esp-idf`.
+- Linux expected IDF path should usually be `$HOME/esp/v5.5/esp-idf`, unless `.env` overrides it.
+- Serial ports are machine-specific. On Linux prefer `/dev/serial/by-id/...` once identified.
+- The board may appear as native USB Serial/JTAG and WCH UART; keep both roles separate.
+
+First steps on Linux:
+
+1. Clone the repo.
+2. Install or verify ESP-IDF `v5.5` for ESP32-P4.
+3. Create `.env` from `.env.example` and set `IDF_PATH`, `PORT`, and optional `RECOVERY_PORT`.
+4. Create Python virtualenv and install `requirements.txt`.
+5. Run `npm install` and `npm run build` in `host/workbench/frontend`.
+6. Run `python host/gbc_probe.py ports` to identify device names.
+7. Start with lab firmware and UI, not production firmware.
+
+Important restructuring still pending:
+
+- Extract machine setup into one explicit lab setup script.
+- Separate lab platform code from target/project modules more clearly.
+- Add project/profile selection to backend commands so hardcoded GBC paths become compatibility aliases.
+- Keep imported ESP-IDF examples read-only and project-local overlays separate from SDK source.
+- Keep local projects and generated SDK inventories organized so they can later move to separate repos or ignored local workspaces if needed.
