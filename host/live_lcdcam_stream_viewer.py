@@ -48,6 +48,7 @@ class LiveLcdcamState:
         self.baud = baud
         self.timeout = timeout
         self._client: ProbeClient | None = None
+        self._serial_owner = "backend"
         self._device_error = ""
         self.command = command
         self.data_mode = data_mode
@@ -104,6 +105,7 @@ class LiveLcdcamState:
         try:
             self._client = ProbeClient(self.port, self.baud, self.timeout)
             self._client.drain_startup()
+            self._serial_owner = "backend"
             self._device_error = ""
             if clear_error:
                 with self._lock:
@@ -114,6 +116,8 @@ class LiveLcdcamState:
             return True
         except Exception as exc:
             self._client = None
+            if self._serial_owner != "browser_flash":
+                self._serial_owner = "disconnected"
             self._device_error = str(exc)
             with self._lock:
                 self._source_state = "device_unavailable"
@@ -133,6 +137,7 @@ class LiveLcdcamState:
             if self._client is not None:
                 self._client.close()
                 self._client = None
+            self._serial_owner = "closed"
 
     def release_serial_for_deploy(self) -> dict[str, Any]:
         self.stop_power_monitor()
@@ -142,7 +147,28 @@ class LiveLcdcamState:
             if self._client is not None:
                 self._client.close()
                 self._client = None
-        return {"ok": True, "port": self.port, "state": "serial_released_for_deploy"}
+            self._serial_owner = "browser_flash"
+        return {"ok": True, "port": self.port, "state": "serial_released_for_browser_flash", "serial_owner": self._serial_owner}
+
+    def reconnect_serial_after_deploy(self) -> dict[str, Any]:
+        with self._serial_lock:
+            if self._client is None:
+                if not self._connect_serial_locked(clear_error=True):
+                    return {
+                        "ok": False,
+                        "port": self.port,
+                        "state": "reconnect_failed",
+                        "serial_owner": self._serial_owner,
+                        "error": self._device_error or "reconnect_failed",
+                    }
+            self._serial_owner = "backend"
+        return {
+            "ok": True,
+            "port": self.port,
+            "state": "serial_reconnected",
+            "serial_owner": self._serial_owner,
+            "status": self.status(),
+        }
 
     def capture(self) -> dict[str, Any]:
         with self._serial_lock:
@@ -230,6 +256,7 @@ class LiveLcdcamState:
                 "device_connected": self._client is not None,
                 "device_error": self._device_error,
                 "serial_port": self.port,
+                "serial_owner": self._serial_owner,
                 "running": is_running if running is None else running,
                 "source_state": self._source_state,
                 "source_wait_ms": 0 if self._source_wait_since_monotonic <= 0 else int((time.monotonic() - self._source_wait_since_monotonic) * 1000),
@@ -1734,6 +1761,71 @@ def run_project_script(project: dict[str, Any], action: str, build_profile: str,
     }
 
 
+def project_build_output_dir(project: dict[str, Any], build_profile: str) -> Path:
+    profiles = normalize_build_profiles(project)
+    selected = profiles.get(build_profile)
+    if not isinstance(selected, dict):
+        raise ValueError(f"unknown_build_profile:{build_profile}")
+    default_env = selected.get("default_env")
+    if isinstance(default_env, dict):
+        for env_key in ("BUILD_DIR", "LAB_BUILD_DIR", "TELEMETRY_BUILD_DIR"):
+            value = default_env.get(env_key)
+            if isinstance(value, str) and value.strip():
+                return project_root_dir() / "firmware" / value.strip()
+    defaults = {
+        "lab": "build_lab",
+        "telemetry": "build_telemetry",
+        "production": "build_production_mirror",
+    }
+    return project_root_dir() / "firmware" / defaults.get(build_profile, f"build_{build_profile}")
+
+
+def load_flash_manifest(project: dict[str, Any], build_profile: str) -> dict[str, Any]:
+    build_dir = project_build_output_dir(project, build_profile)
+    flasher_args_path = build_dir / "flasher_args.json"
+    if not flasher_args_path.exists():
+        raise FileNotFoundError(f"flash_manifest_missing:{flasher_args_path}")
+    raw = json.loads(flasher_args_path.read_text(encoding="utf-8"))
+    flash_settings = raw.get("flash_settings", {})
+    extra_args = raw.get("extra_esptool_args", {})
+    flash_files = raw.get("flash_files", {})
+    if not isinstance(flash_settings, dict) or not isinstance(extra_args, dict) or not isinstance(flash_files, dict):
+        raise ValueError("invalid_flasher_args_json")
+    images = []
+    for address_text, relative_path in sorted(flash_files.items(), key=lambda item: int(str(item[0]), 0)):
+        if not isinstance(relative_path, str) or not relative_path:
+            continue
+        artifact_path = (build_dir / relative_path).resolve()
+        if not artifact_path.exists() or not artifact_path.is_file():
+            raise FileNotFoundError(f"flash_image_missing:{artifact_path}")
+        images.append({
+            "address": int(str(address_text), 0),
+            "relative_path": relative_path,
+            "size": artifact_path.stat().st_size,
+            "url": (
+                f"/api/projects/artifact?id={project.get('id', '')}"
+                f"&profile={build_profile}"
+                f"&path={relative_path}"
+            ),
+        })
+    return {
+        "ok": True,
+        "project_id": project.get("id", ""),
+        "project_name": project.get("name", ""),
+        "build_profile": build_profile,
+        "chip": str(extra_args.get("chip") or "esp32p4"),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "build_dir": str(build_dir),
+        "before": str(extra_args.get("before") or "default_reset"),
+        "after": str(extra_args.get("after") or "hard_reset"),
+        "flash_mode": str(flash_settings.get("flash_mode") or "dio"),
+        "flash_freq": str(flash_settings.get("flash_freq") or "80m"),
+        "flash_size": str(flash_settings.get("flash_size") or "keep"),
+        "reset_strategy": "usb_jtag_serial",
+        "images": images,
+    }
+
+
 def inventory_path(name: str) -> Path:
     return project_root_dir() / name
 
@@ -2313,6 +2405,37 @@ def make_handler(
                     "gpios": profile_gpio_list,
                 }).encode("utf-8"))
                 return
+            if path == "/api/projects/flash-manifest":
+                query = parse_qs(parsed.query)
+                try:
+                    project_id = (query.get("id") or [""])[0].strip()
+                    build_profile = (query.get("profile") or ["production"])[0].strip() or "production"
+                    project = find_project(load_project_profiles(), project_id)
+                    manifest = load_flash_manifest(project, build_profile)
+                    self.send_body(200, "application/json", json.dumps(manifest).encode("utf-8"))
+                except Exception as exc:
+                    self.send_body(400, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
+            if path == "/api/projects/artifact":
+                query = parse_qs(parsed.query)
+                try:
+                    project_id = (query.get("id") or [""])[0].strip()
+                    build_profile = (query.get("profile") or ["production"])[0].strip() or "production"
+                    relative_path = (query.get("path") or [""])[0].strip()
+                    if not relative_path:
+                        raise ValueError("artifact_path_required")
+                    project = find_project(load_project_profiles(), project_id)
+                    build_dir = project_build_output_dir(project, build_profile).resolve()
+                    artifact_path = (build_dir / relative_path).resolve()
+                    if not str(artifact_path).startswith(str(build_dir)):
+                        raise ValueError("artifact_path_out_of_bounds")
+                    if not artifact_path.exists() or not artifact_path.is_file():
+                        raise FileNotFoundError(f"artifact_not_found:{relative_path}")
+                    content_type = mimetypes.guess_type(artifact_path.name)[0] or "application/octet-stream"
+                    self.send_body(200, content_type, artifact_path.read_bytes())
+                except Exception as exc:
+                    self.send_body(404, "application/json", json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"))
+                return
             if path == "/api/frame":
                 try:
                     self.send_body(200, "application/json", json.dumps(state.capture()).encode("utf-8"))
@@ -2362,6 +2485,12 @@ def make_handler(
                 return
             if path == "/api/stop":
                 self.send_body(200, "application/json", json.dumps(state.stop_continuous(isolate=True)).encode("utf-8"))
+                return
+            if path == "/api/serial/release":
+                self.send_body(200, "application/json", json.dumps(state.release_serial_for_deploy()).encode("utf-8"))
+                return
+            if path == "/api/serial/reconnect":
+                self.send_body(200, "application/json", json.dumps(state.reconnect_serial_after_deploy()).encode("utf-8"))
                 return
             if path == "/api/status":
                 self.send_body(200, "application/json", json.dumps(state.status()).encode("utf-8"))

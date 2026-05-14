@@ -64,6 +64,7 @@ import {
   ArtifactItem,
   DestinationProfile,
   EspressifRepo,
+  FlashManifest,
   LabBlock,
   LabProject,
   PinRow,
@@ -71,6 +72,7 @@ import {
   ProjectValidation,
   SdkExample,
   SdkInventorySummary,
+  SerialOwnershipResult,
   TargetProfile,
   WorkbenchStatus
 } from './api';
@@ -285,8 +287,13 @@ function ProjectPage({
 }) {
   const [validation, setValidation] = useState<ProjectValidation | null>(null);
   const [projectBusy, setProjectBusy] = useState<string | null>(null);
-  const [projectResult, setProjectResult] = useState<ProjectActionResult | null>(null);
+  const [projectResult, setProjectResult] = useState<Record<string, unknown> | ProjectActionResult | null>(null);
   const [selectedBuildProfile, setSelectedBuildProfile] = useState<string>('production');
+  const [flashManifest, setFlashManifest] = useState<FlashManifest | null>(null);
+  const [browserFlashProgress, setBrowserFlashProgress] = useState(0);
+  const [browserFlashState, setBrowserFlashState] = useState('idle');
+  const [browserFlashLogs, setBrowserFlashLogs] = useState<string[]>([]);
+  const [serialOwnership, setSerialOwnership] = useState<SerialOwnershipResult | null>(null);
 
   const buildProfileEntries = Object.entries(selectedProject?.build_profiles || {});
   const buildProfileOptions = buildProfileEntries.map(([id, entry]) => ({
@@ -312,6 +319,29 @@ function ProjectPage({
     }
   }, [selectedProject, selectedBuildProfile]);
 
+  useEffect(() => {
+    setFlashManifest(null);
+    setBrowserFlashProgress(0);
+    setBrowserFlashState('idle');
+    setBrowserFlashLogs([]);
+    setSerialOwnership(null);
+  }, [selectedProject?.id, selectedBuildProfile]);
+
+  const browserSerialSupported = typeof navigator !== 'undefined' && 'serial' in navigator;
+
+  const appendBrowserFlashLog = (line: string) => {
+    setBrowserFlashLogs((current) => [...current.slice(-79), line]);
+  };
+
+  const loadBrowserFlashManifest = async () => {
+    if (!selectedProject || selectedProject.status === 'draft_local_only') {
+      throw new Error('project_not_ready');
+    }
+    const manifest = await api.flashManifest(selectedProject.id, selectedBuildProfile);
+    setFlashManifest(manifest);
+    return manifest;
+  };
+
   const validateProject = async () => {
     if (!selectedProject || selectedProject.status === 'draft_local_only') return;
     setProjectBusy('validate');
@@ -327,6 +357,194 @@ function ProjectPage({
         warnings: [],
         source_gpios: [],
         destination_gpios: []
+      });
+    } finally {
+      setProjectBusy(null);
+    }
+  };
+
+  const prepareBrowserFlash = async () => {
+    if (!selectedProject || selectedProject.status === 'draft_local_only') return;
+    setProjectBusy('prepare-browser-flash');
+    setBrowserFlashState('preparing');
+    setBrowserFlashLogs([]);
+    setBrowserFlashProgress(0);
+    try {
+      const manifest = await loadBrowserFlashManifest();
+      appendBrowserFlashLog(`Loaded flash manifest for ${manifest.project_id}:${manifest.build_profile}`);
+      const ownership = await api.releaseSerial();
+      setSerialOwnership(ownership);
+      appendBrowserFlashLog(`Released backend serial ownership on ${ownership.port || status?.serial_port || 'unknown port'}`);
+      setBrowserFlashState('prepared');
+      setProjectResult({
+        ok: true,
+        action: 'browser_flash_prepare',
+        build_profile: selectedBuildProfile,
+        manifest,
+        ownership
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      appendBrowserFlashLog(`Prepare failed: ${message}`);
+      setBrowserFlashState('error');
+      setProjectResult({
+        ok: false,
+        action: 'browser_flash_prepare',
+        build_profile: selectedBuildProfile,
+        error: message
+      });
+    } finally {
+      setProjectBusy(null);
+    }
+  };
+
+  const reconnectAfterBrowserFlash = async () => {
+    setProjectBusy('reconnect-browser-flash');
+    try {
+      const ownership = await api.reconnectSerial();
+      setSerialOwnership(ownership);
+      appendBrowserFlashLog(ownership.ok ? 'Reconnected backend serial ownership' : `Reconnect failed: ${ownership.error || 'unknown error'}`);
+      setBrowserFlashState(ownership.ok ? 'reconnected' : 'error');
+      setProjectResult({
+        ok: ownership.ok,
+        action: 'browser_flash_reconnect',
+        build_profile: selectedBuildProfile,
+        ownership
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      appendBrowserFlashLog(`Reconnect failed: ${message}`);
+      setBrowserFlashState('error');
+      setProjectResult({
+        ok: false,
+        action: 'browser_flash_reconnect',
+        build_profile: selectedBuildProfile,
+        error: message
+      });
+    } finally {
+      setProjectBusy(null);
+    }
+  };
+
+  const runBrowserFlash = async () => {
+    if (!selectedProject || selectedProject.status === 'draft_local_only') return;
+    if (!browserSerialSupported) {
+      setBrowserFlashState('error');
+      setProjectResult({
+        ok: false,
+        action: 'browser_flash',
+        build_profile: selectedBuildProfile,
+        error: 'web_serial_not_supported_use_chrome_or_edge_desktop'
+      });
+      return;
+    }
+    setProjectBusy('browser-flash');
+    setBrowserFlashProgress(0);
+    setBrowserFlashState('flashing');
+    try {
+      const manifest = flashManifest || await loadBrowserFlashManifest();
+      if (serialOwnership?.serial_owner !== 'browser_flash') {
+        const ownership = await api.releaseSerial();
+        setSerialOwnership(ownership);
+      }
+      appendBrowserFlashLog(`Requesting browser serial port for ${manifest.chip}`);
+      const serialApi = (navigator as Navigator & {
+        serial?: {
+          requestPort: (options?: unknown) => Promise<unknown>;
+        };
+      }).serial;
+      if (!serialApi) {
+        throw new Error('web_serial_not_supported');
+      }
+      const port = await serialApi.requestPort();
+      const esptool = await import('esptool-js');
+      const terminal = {
+        clean() {
+          setBrowserFlashLogs([]);
+        },
+        writeLine(data: string) {
+          appendBrowserFlashLog(data);
+        },
+        write(data: string) {
+          if (data.trim()) appendBrowserFlashLog(data);
+        }
+      };
+      const transport = new esptool.Transport(port, true);
+      const loader = new esptool.ESPLoader({
+        transport,
+        baudrate: 115200,
+        terminal,
+        debugLogging: false,
+        resetConstructors: {
+          usbJTAGSerialReset: (transportInstance: unknown) => new esptool.UsbJtagSerialReset(transportInstance as never)
+        }
+      });
+      const chipName = await loader.main(manifest.before as never);
+      appendBrowserFlashLog(`Connected to ${chipName}`);
+      const totalBytes = manifest.images.reduce((sum, image) => sum + image.size, 0);
+      const imageData = await Promise.all(manifest.images.map(async (image) => {
+        const response = await fetch(image.url, { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`artifact_fetch_failed:${image.relative_path}`);
+        }
+        return {
+          address: image.address,
+          size: image.size,
+          data: new Uint8Array(await response.arrayBuffer())
+        };
+      }));
+      let committedBase = 0;
+      await loader.writeFlash({
+        fileArray: imageData.map((image) => ({ data: image.data, address: image.address })),
+        flashMode: manifest.flash_mode as never,
+        flashFreq: manifest.flash_freq as never,
+        flashSize: manifest.flash_size as never,
+        eraseAll: false,
+        compress: true,
+        reportProgress: (fileIndex: number, written: number, total: number) => {
+          const currentSize = imageData[fileIndex]?.size || total || 0;
+          const normalizedWritten = total > 0 ? Math.min(currentSize, Math.round((written / total) * currentSize)) : written;
+          const overallWritten = Math.min(totalBytes, committedBase + normalizedWritten);
+          setBrowserFlashProgress(totalBytes > 0 ? Math.round((overallWritten / totalBytes) * 100) : 0);
+          if (written >= total) {
+            committedBase += currentSize;
+          }
+        }
+      });
+      setBrowserFlashProgress(100);
+      appendBrowserFlashLog('Flash write completed');
+      await loader.after(manifest.after as never);
+      await transport.disconnect();
+      appendBrowserFlashLog('Device reset complete');
+      setBrowserFlashState('flashed');
+      const result: Record<string, unknown> = {
+        ok: true,
+        action: 'browser_flash',
+        build_profile: selectedBuildProfile,
+        chip: chipName,
+        manifest
+      };
+      if (selectedBuildProfile !== 'production') {
+        const reconnect = await api.reconnectSerial();
+        setSerialOwnership(reconnect);
+        appendBrowserFlashLog(reconnect.ok ? 'Backend serial reconnected for lab monitoring' : `Reconnect failed: ${reconnect.error || 'unknown error'}`);
+        if (reconnect.ok) {
+          setBrowserFlashState('reconnected');
+        }
+        result.reconnect = reconnect;
+      } else {
+        appendBrowserFlashLog('Production flash leaves the board in product mode until lab firmware is flashed again');
+      }
+      setProjectResult(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      appendBrowserFlashLog(`Browser flash failed: ${message}`);
+      setBrowserFlashState('error');
+      setProjectResult({
+        ok: false,
+        action: 'browser_flash',
+        build_profile: selectedBuildProfile,
+        error: message
       });
     } finally {
       setProjectBusy(null);
@@ -392,6 +610,9 @@ function ProjectPage({
                 <Button icon={<CheckCircleOutlined />} loading={projectBusy === 'validate'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={validateProject}>Validate</Button>
                 <Button icon={<BugOutlined />} loading={projectBusy === 'build'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={() => runProjectAction('build')}>Build</Button>
                 <Button type="primary" danger icon={<RocketOutlined />} loading={projectBusy === 'flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={() => runProjectAction('flash')}>{`Flash ${activeBuildProfile?.name || 'Build'}`}</Button>
+                <Button icon={<DisconnectOutlined />} loading={projectBusy === 'prepare-browser-flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={prepareBrowserFlash}>Prepare Browser Flash</Button>
+                <Button type="primary" icon={<ThunderboltOutlined />} loading={projectBusy === 'browser-flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only' || !browserSerialSupported} onClick={runBrowserFlash}>Flash In Browser</Button>
+                <Button icon={<ReloadOutlined />} loading={projectBusy === 'reconnect-browser-flash'} disabled={!selectedProject || selectedProject.status === 'draft_local_only'} onClick={reconnectAfterBrowserFlash}>Reconnect Lab</Button>
                 <Button disabled={!selectedProject} onClick={() => selectedProject && onSaveProject(selectedProject)}>Save</Button>
                 <Button disabled={!selectedProject} onClick={() => selectedProject && onDuplicateProject(selectedProject)}>Duplicate</Button>
                 <Button danger disabled={!selectedProject} onClick={() => selectedProject && onDeleteProject(selectedProject)}>Delete</Button>
@@ -405,6 +626,13 @@ function ProjectPage({
                   children: (
                     <Space direction="vertical" className="fullWidth">
                       <Text type="secondary">Flash releases the workbench serial session first. Production leaves the board in product mode; lab and telemetry keep the interactive command path available for the workbench.</Text>
+                      <MetricStrip items={[
+                        { label: 'Browser Flash', value: browserSerialSupported ? 'supported' : 'Chrome/Edge required' },
+                        { label: 'Serial Owner', value: serialOwnership?.serial_owner || status?.serial_owner || 'unknown' },
+                        { label: 'Flash State', value: browserFlashState },
+                        { label: 'Progress', value: `${browserFlashProgress}%` }
+                      ]} />
+                      {flashManifest ? <JsonBlock value={flashManifest} /> : null}
                       <JsonBlock value={activeBuildProfile} />
                     </Space>
                   )
@@ -456,6 +684,22 @@ function ProjectPage({
                   key: 'result',
                   label: 'Result',
                   children: projectResult ? <JsonBlock value={projectResult} /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No build or flash result yet" />
+                },
+                {
+                  key: 'browser-flash',
+                  label: 'Browser Flash',
+                  children: (
+                    <Space direction="vertical" className="fullWidth">
+                      {!browserSerialSupported ? <Alert type="warning" showIcon message="Browser flashing requires desktop Chrome or Edge with Web Serial support." /> : null}
+                      <Tag color={browserFlashState === 'error' ? 'red' : browserFlashState === 'reconnected' || browserFlashState === 'flashed' ? 'green' : 'blue'}>{browserFlashState}</Tag>
+                      <JsonBlock value={{
+                        serial_ownership: serialOwnership,
+                        manifest: flashManifest,
+                        progress_percent: browserFlashProgress,
+                        logs: browserFlashLogs
+                      }} />
+                    </Space>
+                  )
                 }
               ]}
             />

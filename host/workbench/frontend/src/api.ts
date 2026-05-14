@@ -3,6 +3,7 @@ export type WorkbenchStatus = {
   device_connected?: boolean;
   device_error?: string;
   serial_port?: string;
+  serial_owner?: string;
   running: boolean;
   source_state: string;
   source_wait_ms: number;
@@ -167,6 +168,39 @@ export type ProjectActionResult = {
   error?: string;
 };
 
+export type SerialOwnershipResult = {
+  ok: boolean;
+  port?: string;
+  state?: string;
+  serial_owner?: string;
+  error?: string;
+  status?: WorkbenchStatus;
+};
+
+export type FlashManifestImage = {
+  address: number;
+  relative_path: string;
+  size: number;
+  url: string;
+};
+
+export type FlashManifest = {
+  ok: boolean;
+  project_id: string;
+  project_name?: string;
+  build_profile: string;
+  chip: string;
+  generated_at: string;
+  build_dir: string;
+  before: string;
+  after: string;
+  flash_mode: string;
+  flash_freq: string;
+  flash_size: string;
+  reset_strategy: string;
+  images: FlashManifestImage[];
+};
+
 export type ProjectMutationResult = {
   ok: boolean;
   project?: LabProject;
@@ -288,6 +322,9 @@ export const api = {
   validateProject: (projectId: string) => getJson<ProjectValidation>(`/api/projects/validate?id=${encodeURIComponent(projectId)}`),
   buildProject: (projectId: string, profile = 'production') => postJson<ProjectActionResult>('/api/projects/build', { id: projectId, profile }),
   flashProject: (projectId: string, profile = 'production') => postJson<ProjectActionResult>('/api/projects/flash', { id: projectId, profile }),
+  flashManifest: (projectId: string, profile = 'production') => getJson<FlashManifest>(`/api/projects/flash-manifest?id=${encodeURIComponent(projectId)}&profile=${encodeURIComponent(profile)}`),
+  releaseSerial: () => getJson<SerialOwnershipResult>('/api/serial/release'),
+  reconnectSerial: () => getJson<SerialOwnershipResult>('/api/serial/reconnect'),
   profile: () => getJson<TargetProfile>('/api/profile'),
   destinationProfile: () => getJson<DestinationProfile>('/api/destination-profile'),
   saveDestinationProfile: (payload: unknown) => postJson<{ ok: boolean; profile: DestinationProfile; path: string }>('/api/destination-profile', payload),
