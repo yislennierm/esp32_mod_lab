@@ -4,7 +4,7 @@ Purpose: map the documentation set so humans and AI agents know what to read fir
 
 Status: canonical navigation file.
 
-Last updated: 2026-05-11.
+Last updated: 2026-05-15.
 
 ## Read Order
 
@@ -33,6 +33,7 @@ For humans:
 | `docs/DECISIONS.md` | Decision log and architectural constraints. |
 | `docs/DOCS_INDEX.md` | Documentation map and read order. |
 | `docs/system_method.md` | Source-processing-destination method. |
+| `docs/repository_strategy.md` | Lab repo vs concrete project repo strategy. |
 | `docs/project_block_model.md` | Lab block and deployable project model. |
 | `docs/flowgraph_lab_plan.md` | GNU Radio-inspired graph UI and ESP32-P4 block-dashboard plan. |
 | `docs/graph_workspace_tools_plan.md` | Graph toolbar, layer semantics, and WYSIWYG/GNU Radio workspace plan. |
@@ -50,6 +51,7 @@ For humans:
 | Doc | Purpose |
 |---|---|
 | `docs/universal_signal_lab.md` | Generic lab model and target/profile split. |
+| `docs/repository_strategy.md` | Strategy for keeping `esp32_mod_lab` generic while concrete projects such as GBC live in project repos. |
 | `docs/architecture.md` | Architecture history and firmware/host split. |
 | `docs/investigation_workbench.md` | Browser and host workbench workflow. |
 | `docs/ant_design_ui_plan.md` | Browser UI component mapping and migration plan. |

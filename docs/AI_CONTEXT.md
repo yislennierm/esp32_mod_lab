@@ -4,7 +4,7 @@ Purpose: compact current truth for Codex or another AI agent. Read this first, t
 
 Status: canonical and current. Keep this file short.
 
-Last updated: 2026-05-11.
+Last updated: 2026-05-15.
 
 ## Project
 
@@ -18,6 +18,17 @@ Goal: use the ESP32-P4 both as:
 Current source target: Game Boy Color LCD bus, profile `profiles/gbc_lcd.json`.
 
 Current system method: source bus -> ESP32-P4 capture/processing -> destination, controlled and observed from host/browser/AI tools.
+
+## Repository Roles
+
+Current GitHub repos:
+
+- `https://github.com/yislennierm/esp32_mod_lab`: generic lab/workbench, SDK inventory, graph UI, instrumentation, reusable host/firmware patterns.
+- `https://github.com/yislennierm/esp32p4_gbc_screen_mod`: first concrete project repo for the GBC screen-mod work.
+
+The split is not fully implemented yet. Until it is, keep GBC-specific assumptions from leaking into the generic lab UI and backend. Treat GBC as a project/profile, not as the lab default.
+
+Remote lab branch `origin/codex/three-build-project-split` exists with additional workbench/flowgraph changes. Inspect before merging because it may need cleanup against the lab/project boundary.
 
 ## Canonical Docs
 

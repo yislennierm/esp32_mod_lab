@@ -208,19 +208,35 @@ Relevant docs:
 - `docs/graph_workspace_tools_plan.md`
 - `docs/graph_block_editors.md`
 
-## Portability / Next Computer Plan
+## Repository Split / Portability Plan
 
-The repo is currently staying as one GitHub repository: `https://github.com/yislennierm/esp32_mod_lab`.
+Known GitHub repositories as of 2026-05-15:
 
-Conceptual split to preserve while still in one repo:
+- Lab/workbench repo: `https://github.com/yislennierm/esp32_mod_lab`
+- First concrete project repo: `https://github.com/yislennierm/esp32p4_gbc_screen_mod`
+
+The split is not fully enforced in code yet, but future work must preserve these roles.
+
+`esp32_mod_lab` owns:
 
 - Lab platform: browser workbench, ESP32-P4 block inventory, SDK importer, generic graph editor, setup scripts.
-- Projects: machine-readable project JSON under `projects/`.
-- Target profiles: source/input profiles under `profiles/`, currently `profiles/gbc_lcd.json`.
-- I/O profiles: output/hardware profiles under `profiles/`, currently `profiles/spi_lcd_destination.json`.
-- SDK/reference inventories: generated local metadata under `sdk_inventory/` and `inventories/`.
+- Generic firmware instrumentation patterns and reusable host tools.
+- SDK/reference inventories under `sdk_inventory/` and `inventories/`.
+- Read-only imported ESP-IDF example models and generic `hello_led` style projects.
 
-Do not treat GBC as the lab itself. GBC is one project/profile pair and the first proof target. `hello_led` and imported ESP-IDF examples must be able to open without showing GBC as the active project.
+`esp32p4_gbc_screen_mod` should own, or eventually own:
+
+- GBC-specific source profile, wiring profile, and evidence-derived assumptions.
+- GBC-to-display production firmware variants.
+- Project-specific PCB/pinout choices.
+- Project-specific captures, screenshots, and display tuning notes that are not generic lab evidence.
+
+Do not treat GBC as the lab itself. GBC is one project/profile pair and the first proof target. `hello_led`, imported ESP-IDF examples, and future projects must open without showing GBC as the active project.
+
+Current local state on this machine:
+
+- `main` tracks `origin/main` for `esp32_mod_lab`.
+- Remote branch `origin/codex/three-build-project-split` exists and contains additional workbench/flowgraph changes. Do not merge it blindly; inspect it against the two-repo boundary first.
 
 Machine-local items:
 
@@ -247,3 +263,4 @@ Important restructuring still pending:
 - Add project/profile selection to backend commands so hardcoded GBC paths become compatibility aliases.
 - Keep imported ESP-IDF examples read-only and project-local overlays separate from SDK source.
 - Keep local projects and generated SDK inventories organized so they can later move to separate repos or ignored local workspaces if needed.
+- Decide the handoff/export format between `esp32_mod_lab` and `esp32p4_gbc_screen_mod`: project JSON, profiles, firmware target descriptors, and generated code should move intentionally, not by copying random folders.
